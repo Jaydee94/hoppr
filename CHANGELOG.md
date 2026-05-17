@@ -1,3 +1,7 @@
+## v0.1.4 — 2026-05-17
+
+- fix(editor): auto-save on exit when there are unsaved changes (c979775)
+
 ## v0.1.3 — 2026-05-17
 
 - style(ui): apply rustfmt formatting to editor hint arms (8bbdbec)
