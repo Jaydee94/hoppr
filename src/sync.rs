@@ -130,7 +130,14 @@ pub fn ensure_repo(ctx: &SyncContext) -> Result<SyncStatus> {
             })?;
         }
         let mut callbacks = RemoteCallbacks::new();
-        callbacks.credentials(credentials_cb);
+        let mut attempts = 0u32;
+        callbacks.credentials(move |url, user, allowed| {
+            attempts += 1;
+            if attempts > 1 {
+                return Err(git2::Error::from_str("credentials already attempted"));
+            }
+            credentials_cb(url, user, allowed)
+        });
         let mut fetch_opts = FetchOptions::new();
         fetch_opts.remote_callbacks(callbacks);
 
@@ -161,7 +168,14 @@ pub fn pull(ctx: &SyncContext) -> Result<SyncStatus> {
             .context("missing origin remote")?;
 
         let mut callbacks = RemoteCallbacks::new();
-        callbacks.credentials(credentials_cb);
+        let mut attempts = 0u32;
+        callbacks.credentials(move |url, user, allowed| {
+            attempts += 1;
+            if attempts > 1 {
+                return Err(git2::Error::from_str("credentials already attempted"));
+            }
+            credentials_cb(url, user, allowed)
+        });
         let mut fetch_opts = FetchOptions::new();
         fetch_opts.remote_callbacks(callbacks);
 
@@ -244,7 +258,14 @@ pub fn commit_and_push(ctx: &SyncContext, message: &str) -> Result<()> {
         .find_remote("origin")
         .context("missing origin remote")?;
     let mut callbacks = RemoteCallbacks::new();
-    callbacks.credentials(credentials_cb);
+    let mut attempts = 0u32;
+    callbacks.credentials(move |url, user, allowed| {
+        attempts += 1;
+        if attempts > 1 {
+            return Err(git2::Error::from_str("credentials already attempted"));
+        }
+        credentials_cb(url, user, allowed)
+    });
     let mut push_opts = PushOptions::new();
     push_opts.remote_callbacks(callbacks);
 
