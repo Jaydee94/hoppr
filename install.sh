@@ -36,6 +36,11 @@ fetch_latest_tag() {
         exit 1
     fi
 
+    if [[ ! "$tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+ ]]; then
+        printf 'Unexpected tag format: %s\n' "$tag" >&2
+        exit 1
+    fi
+
     printf '%s' "$tag"
 }
 
@@ -89,6 +94,11 @@ main() {
 
     printf 'Extracting...\n'
     tar -xz --strip-components=1 -C "$tmp_dir" -f "${tmp_dir}/${asset_name}"
+
+    if [[ ! -f "${tmp_dir}/${BINARY_NAME}" ]]; then
+        printf 'Binary not found in archive — unexpected archive layout\n' >&2
+        exit 1
+    fi
 
     mkdir -p "$INSTALL_DIR"
     mv "${tmp_dir}/${BINARY_NAME}" "${INSTALL_DIR}/${BINARY_NAME}"
