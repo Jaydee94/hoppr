@@ -1,3 +1,8 @@
+## v0.1.5 — 2026-05-17
+
+- feat(tui): enable keyboard enhancement flags for Shift+Enter support (f9e120c)
+- fix(sync): guard credential callback against libgit2 retry loop (c744560)
+
 ## v0.1.4 — 2026-05-17
 
 - fix(editor): auto-save on exit when there are unsaved changes (c979775)
