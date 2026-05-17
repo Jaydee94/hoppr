@@ -20,7 +20,7 @@ crossterm = "0.29"
 directories = "5"
 fuzzy-matcher = "0.3"
 git2 = { version = "0.19", default-features = false, features = ["https", "vendored-libgit2", "vendored-openssl"] }
-ratatui = "0.29"
+ratatui = "0.30"
 serde = { version = "1", features = ["derive"] }
 serde_yaml = "0.9"
 shellexpand = "3"
