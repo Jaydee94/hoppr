@@ -56,11 +56,21 @@ impl TerminalLauncher {
 
         match backend {
             Backend::WindowsTerminal => {
-                Command::new("wt")
-                    .arg("new-tab")
-                    .arg("--")
-                    .args(argv)
-                    .spawn()?;
+                if is_wsl() {
+                    Command::new("wt.exe")
+                        .arg("new-tab")
+                        .arg("--")
+                        .arg("wsl.exe")
+                        .arg("--")
+                        .args(argv)
+                        .spawn()?;
+                } else {
+                    Command::new("wt")
+                        .arg("new-tab")
+                        .arg("--")
+                        .args(argv)
+                        .spawn()?;
+                }
             }
             Backend::MacOSTerminal => {
                 let cmd_str = shell_join(argv);
@@ -104,6 +114,12 @@ impl TerminalLauncher {
         }
         Ok(())
     }
+}
+
+fn is_wsl() -> bool {
+    std::fs::read_to_string("/proc/version")
+        .map(|v| v.to_lowercase().contains("microsoft"))
+        .unwrap_or(false)
 }
 
 fn detect_backend() -> Option<Backend> {
