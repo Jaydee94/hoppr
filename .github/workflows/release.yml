@@ -27,7 +27,7 @@ jobs:
       version: ${{ steps.next.outputs.version }}
       will_release: ${{ steps.next.outputs.will_release }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           fetch-depth: 0
           token: ${{ secrets.GITHUB_TOKEN }}
@@ -88,7 +88,7 @@ jobs:
             asset: hoppr-windows-x86_64.zip
             cross: false
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           fetch-depth: 0
       - uses: dtolnay/rust-toolchain@stable
@@ -147,7 +147,7 @@ jobs:
     if: needs.plan.outputs.will_release == 'true' && github.event.inputs.dry_run != 'true'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           fetch-depth: 0
           token: ${{ secrets.GITHUB_TOKEN }}
@@ -184,7 +184,7 @@ jobs:
     if: github.event.inputs.dry_run == 'true'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           fetch-depth: 0
       - uses: actions/setup-node@v4
