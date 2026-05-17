@@ -3,7 +3,8 @@
 </p>
 
 <p align="center">
-  <em>A fast, minimal TUI launcher for SSH and other remote shells.</em>
+  <strong>Stop typing <code>ssh user@10.4.0.10 -p 2222</code>. Just hop.</strong><br>
+  <em>A fast TUI for the servers you SSH into every day.</em>
 </p>
 
 <p align="center">
@@ -14,87 +15,83 @@
 </p>
 
 <p align="center">
-  <img src="assets/demo.svg" alt="hoppr four-step walk-through: browse, search, settings, connect" width="960">
+  <img src="assets/demo.svg" alt="hoppr four-step walk-through" width="960">
 </p>
-
-<p align="center"><sub>Four keystrokes, four panels: <code>Tab</code> to focus hosts → <code>/</code> to fuzzy-search → <code>e</code> for the in-TUI editor → <code>↩</code> to hand off to ssh. Animated GIF: install <a href="https://github.com/charmbracelet/vhs">VHS</a> and run <code>vhs assets/demo.tape</code> to regenerate <code>assets/demo.gif</code>.</sub></p>
 
 ---
 
-## What it does
+## What is hoppr?
 
-`hoppr` is a tiny TUI you keep on a hotkey. Type to fuzzy-search hosts, hit `↩` to drop into an SSH session — no shell aliases to maintain, no copy-pasting from a notes file. Hosts live in a YAML file you can edit by hand, from inside the TUI, or sync from a central git repo across your machines.
+`hoppr` is a tiny terminal launcher for SSH (and any other remote shell). You open it, type a few letters, hit `Enter` — you're connected. Hosts live in a YAML file you edit by hand, edit inside the TUI, or sync from a private git repo so your team works off the same inventory.
 
 ```bash
-$ hoppr            # interactive TUI
-$ hoppr connect prod-gateway
-$ hoppr list --category prod
-$ hoppr sync push  # commit + push your local edits upstream
+$ hoppr                       # browse + connect interactively
+$ hoppr connect prod-db       # headless, scriptable
+$ hoppr sync push             # share the inventory with your team
 ```
 
-## Highlights
+## Why hoppr?
 
-- **Fast TUI** — built on [ratatui](https://github.com/ratatui-org/ratatui), opens in < 50 ms.
-- **In-TUI settings** — add hosts, edit categories, change defaults, save to YAML. No shelling out to an editor.
-- **Team inventory in git** — point at a repo URL; hoppr auto-clones, fast-forward pulls the shared categories & hosts on every launch, pushes the inventory subset when you want. Your local `defaults` and `sync` settings stay on your machine.
-- **Pluggable connect command** — defaults to `ssh`, supports `mosh`, `telnet`, `kitty +kitten ssh`, raw shell, or any custom template with `{user}` `{host}` `{port}` placeholders.
-- **Favorites & history** — `f` stars a host into a virtual `★ Starred` category. The last 10 connections appear under `🕒 Recent`. Both persist across sessions, never synced to the central repo.
-- **Global search** — `Ctrl+A` while searching switches to cross-category fuzzy search; results show the originating category name.
-- **New-window launch** — `Shift+Enter` opens the connection in a fresh terminal window. hoppr auto-detects Windows Terminal, iTerm2, GNOME Terminal, Konsole, or xterm; override via `defaults.terminal_command`.
-- **CLI parity** — every TUI action is also a subcommand (`connect`, `list`, `sync`, `config`, `history`).
-- **Cross-platform** — Linux, macOS, Windows. Single static binary.
+If you SSH into more than a handful of machines, the same problems hit:
+
+- Your shell aliases drift — half are outdated, half work, you can't tell which.
+- Your `~/.ssh/config` is a wall of `Host` blocks you scroll through every morning.
+- Your team has a doc somewhere with the right IPs, and nobody updates it.
+
+hoppr replaces all three: one YAML file (optionally git-synced for the team), one keystroke to launch the TUI, fuzzy search to find the host, `Enter` to connect.
 
 ## Install
 
-### Pre-built binaries
+Pre-built binaries for Linux (x86_64, aarch64), macOS (Intel, Apple Silicon) and Windows are attached to every [release](https://github.com/Jaydee94/hoppr/releases/latest).
 
 ```bash
-# pick the asset for your OS from the latest release:
-#   https://github.com/Jaydee94/hoppr/releases/latest
+# Linux x86_64
 curl -L https://github.com/Jaydee94/hoppr/releases/latest/download/hoppr-linux-x86_64.tar.gz \
   | tar -xz -C ~/.local/bin
 ```
 
-### From source
+Or from source:
 
 ```bash
-git clone https://github.com/Jaydee94/hoppr.git
-cd hoppr
-cargo install --path .
+cargo install --git https://github.com/Jaydee94/hoppr.git
 ```
 
 ## Quick start
 
 ```bash
-hoppr config init        # writes ~/.config/hoppr/config.yaml
-hoppr                    # launch the TUI
+hoppr config init       # writes a starter config at ~/.config/hoppr/config.yaml
+hoppr                   # launch the TUI
 ```
 
-Inside the TUI:
+In the TUI: `/` to search, `↑ ↓` to navigate, `Enter` to connect, `e` to edit hosts, `q` to quit. Full keymap → [`docs/keybindings.md`](docs/keybindings.md).
 
-| key       | action                          |
-| --------- | ------------------------------- |
-| `Tab`     | switch between Categories / Hosts |
-| `/`       | search                          |
-| `↑ ↓ j k` | navigate                        |
-| `↩`       | connect to the selected host    |
-| `e`       | open the in-TUI settings menu   |
-| `q` `Esc` | quit                            |
+## Highlights
+
+- **Opens in < 50 ms.** Built on [ratatui](https://github.com/ratatui-org/ratatui), single static binary.
+- **Fuzzy search** across categories, with a global cross-category mode.
+- **Edit in place** — add or rename hosts from inside the TUI, no shelling out to `$EDITOR`.
+- **Team inventory in git** — point at a private repo; hoppr clones, pulls on launch, pushes on demand.
+- **Favorites & history** — star the hosts you hop to often; the last 10 connections always sit at the top.
+- **Pluggable transport** — `ssh`, `mosh`, `telnet`, `kitty +kitten ssh`, or a fully custom template.
+- **CLI parity** — every TUI action is also a subcommand, so hoppr fits in scripts as cleanly as in your prompt.
+- **Cross-platform** — Linux, macOS, Windows.
 
 ## Docs
 
-The full reference lives in [`docs/`](./docs):
+The README stays short on purpose. Everything else lives in [`docs/`](./docs):
 
-- [`docs/configuration.md`](docs/configuration.md) — YAML schema, defaults, alternative connect commands
-- [`docs/cli.md`](docs/cli.md) — every subcommand and flag
-- [`docs/sync.md`](docs/sync.md) — central-repo sync, credentials, auto-push
-- [`docs/keybindings.md`](docs/keybindings.md) — keymap for browse + edit modes
-- [`docs/design-system.md`](docs/design-system.md) — color tokens & UI primitives
-- [`docs/development.md`](docs/development.md) — build, test, release flow
+| Topic                                                  | File                                        |
+| ------------------------------------------------------ | ------------------------------------------- |
+| YAML schema, defaults, custom connect commands         | [`configuration.md`](docs/configuration.md) |
+| Every subcommand and flag                              | [`cli.md`](docs/cli.md)                     |
+| Team inventory, credentials, safety model              | [`sync.md`](docs/sync.md)                   |
+| Browse-mode and edit-mode keymap                       | [`keybindings.md`](docs/keybindings.md)     |
+| Color tokens & UI primitives                           | [`design-system.md`](docs/design-system.md) |
+| Build, test, release process                           | [`development.md`](docs/development.md)     |
 
 ## Contributing
 
-Contributions welcome — see [`CONTRIBUTING.md`](CONTRIBUTING.md). All commits must follow [Conventional Commits](https://www.conventionalcommits.org/); the release workflow turns the log between tags into the release notes.
+See [`CONTRIBUTING.md`](CONTRIBUTING.md). All commits follow [Conventional Commits](https://www.conventionalcommits.org/); the release workflow turns the log between tags into release notes.
 
 ## License
 
