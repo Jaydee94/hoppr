@@ -1,3 +1,12 @@
+## v1.0.0 — 2026-05-17
+
+- docs: update keybinding references from Shift+Enter to t (89d4523)
+- feat(terminal): switch new-tab keybinding from Shift+Enter to t (f0b709f)
+- fix(terminal): add REPORT_ALL_KEYS_AS_ESCAPE_CODES for Shift+Enter detection (a4269ee)
+- fix(terminal): use cmd.exe trampoline for Windows Terminal tab from WSL2 (c8cab1f)
+- fix(tui): push keyboard enhancement flags unconditionally (f7bc74d)
+- fix(terminal): use wsl.exe wrapper when spawning new tab from WSL2 (6692028)
+
 ## v0.1.5 — 2026-05-17
 
 - feat(tui): enable keyboard enhancement flags for Shift+Enter support (f9e120c)
