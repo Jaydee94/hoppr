@@ -52,20 +52,33 @@ npm install                    # installs husky + commitlint hooks
 
 ## Release process
 
-Releases are **manual**. From the GitHub UI:
+Releases are **manual**. Every triggered run always builds, tags, and publishes — there is no "no qualifying commits, skipping" branch.
 
-1. Go to **Actions → Release**.
-2. Click **Run workflow**, choose the `main` branch.
-3. semantic-release inspects commits since the last tag, computes the next version (`MAJOR.MINOR.PATCH`), updates `CHANGELOG.md` and `Cargo.toml`, tags `vX.Y.Z`, and publishes a GitHub Release.
-4. The release job then builds binaries for:
-   - `linux-x86_64` (musl)
-   - `linux-aarch64` (musl, cross-compiled)
-   - `macos-x86_64`
-   - `macos-aarch64`
-   - `windows-x86_64`
-5. Tarballs / zips are uploaded as release assets.
+From the GitHub UI:
 
-No human edits the version number directly. To force a major release, write a commit with `BREAKING CHANGE:` in the footer or use the `!` shortcut (`feat!: ...`).
+1. Go to **Actions → release** (the workflow lives in [`.github/workflows/release.yml`](../.github/workflows/release.yml)).
+2. Click **Run workflow** on the `main` branch and pick the inputs:
+   - **`bump`** (default `patch`) — `patch` / `minor` / `major`. Used when `version` is empty.
+   - **`version`** (optional) — explicit semver like `1.2.3`. When set, overrides `bump`.
+   - **`dry_run`** (default `false`) — when on, the workflow only prints the planned version and exits.
+3. The `plan` job picks the next version: explicit input if given, otherwise the highest existing `v*` tag bumped by `bump`. If there is no tag yet, the current `Cargo.toml` version is the baseline. The job refuses to overwrite an existing tag.
+4. The `build` matrix compiles release binaries for:
+   - `x86_64-unknown-linux-musl` → `hoppr-linux-x86_64.tar.gz`
+   - `aarch64-unknown-linux-musl` → `hoppr-linux-aarch64.tar.gz` (cross-compiled)
+   - `x86_64-apple-darwin` → `hoppr-macos-x86_64.tar.gz`
+   - `aarch64-apple-darwin` → `hoppr-macos-aarch64.tar.gz`
+   - `x86_64-pc-windows-msvc` → `hoppr-windows-x86_64.zip`
+
+   Each build pins `Cargo.toml` to the planned version locally so the binary's `--version` matches the tag.
+5. The `publish` job:
+   - downloads every artifact and computes `checksums.txt` (SHA-256),
+   - bumps `Cargo.toml` + `Cargo.lock` on `main`,
+   - prepends a new section to `CHANGELOG.md` with the commits since the previous tag,
+   - commits `chore(release): vX.Y.Z [skip ci]`,
+   - creates an annotated `vX.Y.Z` tag and pushes both,
+   - calls `gh release create vX.Y.Z --generate-notes` and attaches all five archives plus `checksums.txt`.
+
+No human edits `Cargo.toml`'s version directly — the workflow owns it. To prepare a major release, write commits with `feat!:` or a `BREAKING CHANGE:` footer so reviewers know what's coming, then trigger the workflow with `bump: major` (or pass the exact `version`).
 
 ## Project layout
 

@@ -55,7 +55,7 @@ Every commit message must follow [Conventional Commits](https://www.conventional
 Allowed types: `feat`, `fix`, `perf`, `refactor`, `docs`, `test`, `chore`, `ci`, `build`, `style`, `revert`.
 Breaking changes use `!` after the type (e.g. `feat!: drop ssh fallback`) **and** a `BREAKING CHANGE:` footer.
 
-Semantic-release uses these to compute the next version automatically.
+The manual release workflow (see [`docs/development.md`](docs/development.md)) auto-generates `CHANGELOG.md` and the GitHub release notes from these commits.
 
 ### English only
 
@@ -88,11 +88,17 @@ All commits, code comments, docs, error messages and PR descriptions are written
 ## CI / release
 
 - **CI** (`.github/workflows/ci.yml`) runs fmt, clippy with `-D warnings`, tests, and a release build on every push and PR.
-- **Release** (`.github/workflows/release.yml`) is **manual only** — `workflow_dispatch`. It runs `semantic-release`, which:
-  1. computes the next version from conventional commits,
-  2. updates `CHANGELOG.md` and `Cargo.toml`,
-  3. tags `vX.Y.Z` and creates a GitHub Release,
-  4. attaches pre-built binaries for Linux x86_64 + aarch64, macOS x86_64 + aarch64, Windows x86_64.
+- **Release** (`.github/workflows/release.yml`) is **manual only** — `workflow_dispatch`. Every triggered run always builds and publishes. Inputs:
+  - `bump` (`patch`/`minor`/`major`, default `patch`) — used when `version` is empty.
+  - `version` (optional explicit semver) — overrides `bump`.
+  - `dry_run` (boolean) — print the plan and exit.
+
+  On a non-dry run it:
+  1. computes the next version from the latest `v*` tag (or `Cargo.toml` if none) and the chosen bump,
+  2. builds binaries for Linux x86_64 + aarch64 (musl), macOS x86_64 + aarch64, Windows x86_64,
+  3. updates `Cargo.toml`, `Cargo.lock`, and prepends a section to `CHANGELOG.md`,
+  4. commits `chore(release): vX.Y.Z [skip ci]`, tags `vX.Y.Z`, and pushes both,
+  5. creates a GitHub Release via `gh release create --generate-notes` and attaches every archive + `checksums.txt`.
 
 Never push to a release branch directly — open a PR, get it merged into `main`, then trigger the release workflow.
 
@@ -112,8 +118,7 @@ Never push to a release branch directly — open a PR, get it merged into `main`
 ## Files Claude should treat as guardrails
 
 - `commitlint.config.cjs` — commit message rules
-- `.releaserc.json` — release pipeline rules
 - `rust-toolchain.toml` — pinned toolchain
-- `.github/workflows/*.yml` — CI surface
+- `.github/workflows/*.yml` — CI + release surface
 
 Modifying these files requires the matching update to `docs/development.md`.
