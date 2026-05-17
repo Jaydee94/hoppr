@@ -1,7 +1,8 @@
 use std::{
+    cmp::Reverse,
     fs,
     io::{self, Stdout, Write},
-    path::PathBuf,
+    path::{Path, PathBuf},
     process::{Command, Stdio},
     time::Duration,
 };
@@ -65,7 +66,7 @@ fn resolve_config_path(cli: &Cli) -> Result<PathBuf> {
     Ok(path)
 }
 
-fn load_with_sync(cli: &Cli, config_path: &PathBuf) -> Result<(Config, SyncStatus)> {
+fn load_with_sync(cli: &Cli, config_path: &Path) -> Result<(Config, SyncStatus)> {
     let mut config = Config::load_or_default(config_path)?;
     let mut status = if config.sync_enabled() {
         SyncStatus::UpToDate
@@ -233,12 +234,10 @@ fn handle_editor_event(app: &mut App, code: KeyCode, ctrl: bool) -> Result<bool>
                     editor.view = EditorView::CategoryForm;
                 }
             }
-            KeyCode::Char('d') => {
-                if !app.config.categories.is_empty() {
-                    app.config.categories.remove(editor.categories_index);
-                    editor.dirty = true;
-                    editor.flash("Category removed");
-                }
+            KeyCode::Char('d') if !app.config.categories.is_empty() => {
+                app.config.categories.remove(editor.categories_index);
+                editor.dirty = true;
+                editor.flash("Category removed");
             }
             KeyCode::Char('s') if editor.dirty => save_config(app)?,
             _ => {}
@@ -272,11 +271,9 @@ fn handle_editor_event(app: &mut App, code: KeyCode, ctrl: bool) -> Result<bool>
                     .max(1);
                 editor.hosts_index = (editor.hosts_index + 1) % len;
             }
-            KeyCode::Char('a') => {
-                if !app.config.categories.is_empty() {
-                    editor.host_form = Some(HostForm::new_create(editor.categories_index));
-                    editor.view = EditorView::HostForm;
-                }
+            KeyCode::Char('a') if !app.config.categories.is_empty() => {
+                editor.host_form = Some(HostForm::new_create(editor.categories_index));
+                editor.view = EditorView::HostForm;
             }
             KeyCode::Char('r') | KeyCode::Enter => {
                 if let Some(host) = app
@@ -506,7 +503,7 @@ fn save_config(app: &mut App) -> Result<()> {
 
 // ─── headless subcommands ───────────────────────────────────────────────────
 
-fn run_config_cmd(cmd: ConfigCmd, config_path: &PathBuf) -> Result<()> {
+fn run_config_cmd(cmd: ConfigCmd, config_path: &Path) -> Result<()> {
     match cmd {
         ConfigCmd::Path => {
             println!("{}", config_path.display());
@@ -567,7 +564,7 @@ fn starter_config() -> Config {
     }
 }
 
-fn run_sync_cmd(cmd: SyncCmd, _cli: &Cli, config_path: &PathBuf) -> Result<()> {
+fn run_sync_cmd(cmd: SyncCmd, _cli: &Cli, config_path: &Path) -> Result<()> {
     let cfg = Config::load_or_default(config_path)?;
     let sync_cfg = cfg.sync.as_ref().ok_or_else(|| {
         anyhow!(
@@ -747,6 +744,6 @@ fn find_host(config: &Config, query: &str) -> Option<Host> {
             matcher.fuzzy_match(&hay, query).map(|s| (s, h))
         })
         .collect();
-    scored.sort_by(|a, b| b.0.cmp(&a.0));
+    scored.sort_by_key(|(score, _)| Reverse(*score));
     scored.first().map(|(_, h)| (*h).clone())
 }

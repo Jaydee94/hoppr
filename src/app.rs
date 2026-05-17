@@ -1,6 +1,6 @@
 //! Top-level application state for the TUI.
 
-use std::path::PathBuf;
+use std::{cmp::Reverse, path::PathBuf};
 
 use fuzzy_matcher::{skim::SkimMatcherV2, FuzzyMatcher};
 use ratatui::widgets::ListState;
@@ -83,7 +83,7 @@ impl App {
                     .map(|score| (score, host))
             })
             .collect::<Vec<_>>();
-        scored.sort_by(|left, right| right.0.cmp(&left.0));
+        scored.sort_by_key(|(score, _)| Reverse(*score));
         scored.into_iter().map(|(_, host)| host).collect()
     }
 
