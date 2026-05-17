@@ -1,3 +1,9 @@
+## v0.1.3 — 2026-05-17
+
+- style(ui): apply rustfmt formatting to editor hint arms (8bbdbec)
+- fix(ui): context-sensitive editor hints and clearer save feedback (4dfcf65)
+- fix(install.sh): move tmp_dir to script scope to fix unbound variable on exit (4ec2baa)
+
 ## v0.1.2 — 2026-05-17
 
 - fix(ui): show settings keybinding in Browse mode hint bar (da9a039)
