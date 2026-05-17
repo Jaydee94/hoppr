@@ -1,3 +1,18 @@
+## v0.1.2 — 2026-05-17
+
+- fix(ui): show settings keybinding in Browse mode hint bar (da9a039)
+- Merge pull request #24 from Jaydee94/claude/add-install-scripts (35abb3f)
+- docs(readme): update Install section with install script one-liners (645ff79)
+- fix(install.ps1): move PATH success messages inside try block (a265704)
+- fix(install.ps1): robust PATH manipulation for null and long PATH values (a1254a9)
+- feat: add install.ps1 for Windows (58b303c)
+- fix: validate tag format and binary presence in install.sh (1624a06)
+- feat: add install.sh for Linux and macOS (c28e558)
+- docs(plans): add install script implementation plan (a9e353f)
+- docs(specs): add install script design doc (340b4bf)
+- Merge pull request #23 from Jaydee94/claude/readme-overhaul-clearer (d92974d)
+- docs(readme): rewrite for clarity, push details into docs/ (4b6c7a7)
+
 ## v0.1.1 — 2026-05-17
 
 - Merge pull request #22 from Jaydee94/claude/fix-release-process-pbROE (81ea84c)
