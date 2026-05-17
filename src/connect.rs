@@ -112,6 +112,7 @@ mod tests {
                 command: default,
                 port: 22,
                 user: None,
+                terminal_command: None,
             },
             sync: None,
             categories: vec![Category {

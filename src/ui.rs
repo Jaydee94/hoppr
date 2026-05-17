@@ -20,7 +20,7 @@ use ratatui::{
 };
 
 use crate::{
-    app::{App, Focus, Mode},
+    app::{App, Focus, Mode, VirtualCategoryKind},
     connect,
     editor::{CategoryForm, EditorState, EditorView, HostForm, MENU_ITEMS},
     theme::{Theme, ACTIVE_GLYPH, INACTIVE_GLYPH},
@@ -137,28 +137,38 @@ fn draw_body(frame: &mut Frame<'_>, app: &mut App, theme: &Theme, area: Rect) {
 }
 
 fn build_categories<'a>(app: &'a App, theme: &Theme) -> List<'a> {
-    let items: Vec<ListItem> = app
-        .config
-        .categories
-        .iter()
+    let cats = app.categories_for_display();
+    let items: Vec<ListItem> = cats
+        .into_iter()
         .enumerate()
-        .map(|(idx, category)| {
+        .map(|(idx, cat)| {
             let selected = app.categories_state.selected() == Some(idx);
             let prefix = if selected {
                 ACTIVE_GLYPH
             } else {
                 INACTIVE_GLYPH
             };
-            let icon = category.icon.as_deref().unwrap_or("");
-            let line = Line::from(vec![
-                Span::styled(prefix, Style::default().fg(theme.primary)),
-                Span::raw(format!("{icon} ")),
-                Span::styled(
-                    category.name.clone(),
-                    Style::default().fg(if selected { theme.text } else { theme.text_dim }),
-                ),
-            ]);
-            ListItem::new(line)
+            let name_color = if cat.is_virtual {
+                if selected {
+                    theme.accent
+                } else {
+                    theme.text_dim
+                }
+            } else if selected {
+                theme.text
+            } else {
+                theme.text_dim
+            };
+
+            let mut spans = vec![Span::styled(prefix, Style::default().fg(theme.primary))];
+            if let Some(icon) = cat.icon {
+                spans.push(Span::raw(format!("{icon} ")));
+            }
+            spans.push(Span::styled(
+                cat.name.to_owned(),
+                Style::default().fg(name_color),
+            ));
+            ListItem::new(Line::from(spans))
         })
         .collect();
 
@@ -170,10 +180,14 @@ fn build_categories<'a>(app: &'a App, theme: &Theme) -> List<'a> {
 
 fn build_hosts<'a>(app: &'a App, theme: &Theme) -> List<'a> {
     let hosts = app.filtered_hosts();
+    let show_category = (app.search_all && !app.search_query.trim().is_empty())
+        || app.current_virtual_category().is_some();
+
     let items: Vec<ListItem> = hosts
         .iter()
         .enumerate()
-        .map(|(idx, host)| {
+        .map(|(idx, fh)| {
+            let host = fh.host;
             let selected = app.hosts_state.selected() == Some(idx);
             let prefix = if selected {
                 ACTIVE_GLYPH
@@ -181,18 +195,30 @@ fn build_hosts<'a>(app: &'a App, theme: &Theme) -> List<'a> {
                 INACTIVE_GLYPH
             };
             let descriptor = connect::describe(&app.config, host);
+            let is_fav = app.favorites.is_favorite(fh.category_name, &host.name);
+
+            let name_text = if show_category {
+                format!(
+                    "[{}] {}{}",
+                    fh.category_name,
+                    if is_fav { "★ " } else { "" },
+                    host.name
+                )
+            } else {
+                format!("{}{}", if is_fav { "★ " } else { "" }, host.name)
+            };
+
+            let name_style = Style::default()
+                .fg(if selected { theme.text } else { theme.text_dim })
+                .add_modifier(if selected {
+                    Modifier::BOLD
+                } else {
+                    Modifier::empty()
+                });
+
             let line = Line::from(vec![
                 Span::styled(prefix, Style::default().fg(theme.accent)),
-                Span::styled(
-                    host.name.clone(),
-                    Style::default()
-                        .fg(if selected { theme.text } else { theme.text_dim })
-                        .add_modifier(if selected {
-                            Modifier::BOLD
-                        } else {
-                            Modifier::empty()
-                        }),
-                ),
+                Span::styled(name_text, name_style),
                 Span::raw("   "),
                 Span::styled(descriptor, Style::default().fg(theme.text_muted)),
             ]);
@@ -200,10 +226,19 @@ fn build_hosts<'a>(app: &'a App, theme: &Theme) -> List<'a> {
         })
         .collect();
 
-    let title = match app.current_category() {
-        Some(cat) => format!("Hosts · {}", cat.name),
-        None => "Hosts".to_string(),
+    let title = if app.search_all && !app.search_query.trim().is_empty() {
+        "Hosts · All Categories".to_string()
+    } else {
+        match app.current_virtual_category() {
+            Some(VirtualCategoryKind::Recent) => "Hosts · Recent".to_string(),
+            Some(VirtualCategoryKind::Starred) => "Hosts · Starred".to_string(),
+            None => match app.current_category() {
+                Some(cat) => format!("Hosts · {}", cat.name),
+                None => "Hosts".to_string(),
+            },
+        }
     };
+
     List::new(items)
         .block(block_owned(title, app.focus == Focus::Hosts, theme))
         .style(theme.base())
@@ -227,7 +262,14 @@ fn draw_status(frame: &mut Frame<'_>, app: &App, theme: &Theme, area: Rect) {
     .style(theme.base());
     frame.render_widget(sync, split[0]);
 
-    let msg = app.status_message.clone().unwrap_or_default();
+    let mut msg = app.status_message.clone().unwrap_or_default();
+    if app.search_all && !app.search_query.trim().is_empty() {
+        if msg.is_empty() {
+            msg = "global search".to_string();
+        } else {
+            msg = format!("global search · {msg}");
+        }
+    }
     let message = Paragraph::new(Span::styled(msg, Style::default().fg(theme.text_muted)))
         .style(theme.base());
     frame.render_widget(message, split[1]);
@@ -257,14 +299,20 @@ fn sync_color(app: &App, theme: &Theme) -> ratatui::style::Color {
 }
 
 fn draw_hints(frame: &mut Frame<'_>, app: &App, theme: &Theme, area: Rect) {
-    let hints = match app.mode {
-        Mode::Browse => vec![
-            ("Tab", "Focus"),
-            ("/", "Search"),
-            ("e", "Settings"),
-            ("↩", "Connect"),
-            ("q", "Quit"),
-        ],
+    let hints: Vec<(&str, &str)> = match app.mode {
+        Mode::Browse => {
+            let mut h = vec![("Tab", "Focus"), ("/", "Search")];
+            if app.focus == Focus::Search {
+                h.push(("⌃A", "All cats"));
+            }
+            h.push(("f", "Star"));
+            h.push(("↩", "Connect"));
+            if app.terminal.is_available() {
+                h.push(("⇧↩", "New win"));
+            }
+            h.push(("q", "Quit"));
+            h
+        }
         Mode::Edit => vec![
             ("Esc", "Back"),
             ("↑↓", "Move"),
@@ -705,7 +753,10 @@ mod tests {
     use crate::{
         app::App,
         config::{Category, Config, Host},
+        favorites::FavoritesStore,
+        history::HistoryStore,
         sync::SyncStatus,
+        terminal::TerminalLauncher,
     };
 
     #[test]
@@ -726,7 +777,14 @@ mod tests {
                 }],
             }],
         };
-        let mut app = App::new(config, PathBuf::from("/tmp/x.yaml"), SyncStatus::Disabled);
+        let mut app = App::new(
+            config,
+            PathBuf::from("/tmp/x.yaml"),
+            SyncStatus::Disabled,
+            HistoryStore::default(),
+            FavoritesStore::default(),
+            TerminalLauncher::detect(None),
+        );
 
         let backend = TestBackend::new(120, 30);
         let mut terminal = Terminal::new(backend).expect("terminal");
