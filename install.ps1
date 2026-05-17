@@ -72,14 +72,14 @@ try {
         try {
             $NewPath = if ([string]::IsNullOrEmpty($UserPath)) { $InstallDir } else { "$UserPath;$InstallDir" }
             [Environment]::SetEnvironmentVariable('PATH', $NewPath, 'User')
+            Write-Host ''
+            Write-Host "Added $InstallDir to your user PATH."
+            Write-Host 'Open a new terminal for PATH changes to take effect.'
         } catch {
             Write-Host ''
             Write-Host "Warning: Could not add $InstallDir to PATH automatically: $_"
             Write-Host "Add it manually: [System.Environment]::SetEnvironmentVariable('PATH', `"`$env:PATH;$InstallDir`", 'User')"
         }
-        Write-Host ''
-        Write-Host "Added $InstallDir to your user PATH."
-        Write-Host 'Open a new terminal for PATH changes to take effect.'
     }
 
     Write-Host ''
