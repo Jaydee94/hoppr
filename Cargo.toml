@@ -2,14 +2,35 @@
 name = "hoppr"
 version = "0.1.0"
 edition = "2021"
+description = "A fast, minimal TUI launcher for SSH and other remote shells."
+license = "MIT"
+repository = "https://github.com/Jaydee94/hoppr"
+homepage = "https://github.com/Jaydee94/hoppr"
+documentation = "https://github.com/Jaydee94/hoppr#readme"
+readme = "README.md"
+keywords = ["ssh", "tui", "terminal", "launcher", "ratatui"]
+categories = ["command-line-utilities"]
+rust-version = "1.75"
 
 [dependencies]
 anyhow = "1"
+clap = { version = "4", features = ["derive", "env", "wrap_help"] }
+clap_complete = "4"
 crossterm = "0.29"
+directories = "5"
 fuzzy-matcher = "0.3"
+git2 = { version = "0.19", default-features = false, features = ["https", "vendored-libgit2", "vendored-openssl"] }
 ratatui = "0.29"
 serde = { version = "1", features = ["derive"] }
 serde_yaml = "0.9"
+shellexpand = "3"
+thiserror = "1"
+time = { version = "0.3", features = ["formatting", "macros", "local-offset"] }
 
 [dev-dependencies]
 tempfile = "3"
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+strip = "symbols"

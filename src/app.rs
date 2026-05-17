@@ -1,9 +1,15 @@
-use std::{env, process::Command};
+//! Top-level application state for the TUI.
+
+use std::path::PathBuf;
 
 use fuzzy_matcher::{skim::SkimMatcherV2, FuzzyMatcher};
 use ratatui::widgets::ListState;
 
-use crate::config::{Category, Config, Host};
+use crate::{
+    config::{Category, Config, Host},
+    editor::EditorState,
+    sync::SyncStatus,
+};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Focus {
@@ -12,29 +18,44 @@ pub enum Focus {
     Search,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Mode {
+    Browse,
+    Edit,
+}
+
 pub struct App {
     pub config: Config,
+    pub config_path: PathBuf,
     pub focus: Focus,
+    pub mode: Mode,
     pub search_query: String,
     pub categories_state: ListState,
     pub hosts_state: ListState,
+    pub sync_status: SyncStatus,
+    pub status_message: Option<String>,
+    pub editor: Option<EditorState>,
     matcher: SkimMatcherV2,
 }
 
 impl App {
-    pub fn new(config: Config) -> Self {
+    pub fn new(config: Config, config_path: PathBuf, sync_status: SyncStatus) -> Self {
         let mut categories_state = ListState::default();
         categories_state.select((!config.categories.is_empty()).then_some(0));
 
         let mut app = Self {
             config,
+            config_path,
             focus: Focus::Hosts,
+            mode: Mode::Browse,
             search_query: String::new(),
             categories_state,
             hosts_state: ListState::default(),
+            sync_status,
+            status_message: None,
+            editor: None,
             matcher: SkimMatcherV2::default(),
         };
-
         app.ensure_valid_selection();
         app
     }
@@ -49,11 +70,9 @@ impl App {
         let Some(category) = self.current_category() else {
             return Vec::new();
         };
-
         if self.search_query.trim().is_empty() {
             return category.hosts.iter().collect();
         }
-
         let mut scored = category
             .hosts
             .iter()
@@ -64,7 +83,6 @@ impl App {
                     .map(|score| (score, host))
             })
             .collect::<Vec<_>>();
-
         scored.sort_by(|left, right| right.0.cmp(&left.0));
         scored.into_iter().map(|(_, host)| host).collect()
     }
@@ -74,30 +92,6 @@ impl App {
         self.hosts_state
             .selected()
             .and_then(|idx| hosts.get(idx).copied())
-    }
-
-    pub fn selected_host_command(&self) -> Option<Command> {
-        let host = self.selected_host()?;
-
-        if let Some(cmd) = host.cmd.as_deref() {
-            let mut command = Command::new("sh");
-            command.arg("-c").arg(cmd);
-            return Some(command);
-        }
-
-        let mut command = Command::new("ssh");
-        let user = host
-            .user
-            .clone()
-            .or_else(|| env::var("USER").ok())
-            .filter(|value| !value.is_empty())
-            .unwrap_or_else(|| String::from("root"));
-        let port = host.port.unwrap_or(22);
-
-        command.arg("-p").arg(port.to_string());
-        command.arg(format!("{}@{}", user, host.ip));
-
-        Some(command)
     }
 
     pub fn ensure_valid_selection(&mut self) {
@@ -151,7 +145,6 @@ impl App {
             }
             Focus::Search => {}
         }
-
         self.ensure_valid_selection();
     }
 
@@ -182,7 +175,6 @@ impl App {
             }
             Focus::Search => {}
         }
-
         self.ensure_valid_selection();
     }
 
@@ -213,17 +205,38 @@ impl App {
         self.focus = Focus::Hosts;
         self.ensure_valid_selection();
     }
+
+    pub fn enter_edit_mode(&mut self) {
+        self.editor = Some(EditorState::from_config(&self.config));
+        self.mode = Mode::Edit;
+    }
+
+    pub fn exit_edit_mode(&mut self) {
+        self.editor = None;
+        self.mode = Mode::Browse;
+        self.ensure_valid_selection();
+    }
+
+    pub fn set_status<S: Into<String>>(&mut self, msg: S) {
+        self.status_message = Some(msg.into());
+    }
 }
 
 #[cfg(test)]
 mod tests {
-    use crate::config::{Category, Config, Host};
+    use std::path::PathBuf;
+
+    use crate::{
+        config::{Category, Config, Host},
+        sync::SyncStatus,
+    };
 
     use super::App;
 
-    #[test]
-    fn fuzzy_filter_matches_name_and_ip() {
+    fn fixture() -> App {
         let config = Config {
+            defaults: Default::default(),
+            sync: None,
             categories: vec![Category {
                 name: "infra".into(),
                 icon: None,
@@ -234,6 +247,7 @@ mod tests {
                         user: None,
                         port: None,
                         cmd: None,
+                        command: None,
                     },
                     Host {
                         name: "db".into(),
@@ -241,12 +255,17 @@ mod tests {
                         user: None,
                         port: None,
                         cmd: None,
+                        command: None,
                     },
                 ],
             }],
         };
+        App::new(config, PathBuf::from("/tmp/x.yaml"), SyncStatus::Disabled)
+    }
 
-        let mut app = App::new(config);
+    #[test]
+    fn fuzzy_filter_matches_name_and_ip() {
+        let mut app = fixture();
         app.search_query = "gate".into();
         assert_eq!(app.filtered_hosts().len(), 1);
 
@@ -255,23 +274,11 @@ mod tests {
     }
 
     #[test]
-    fn command_prefers_custom_cmd_over_ssh() {
-        let config = Config {
-            categories: vec![Category {
-                name: "ops".into(),
-                icon: None,
-                hosts: vec![Host {
-                    name: "custom".into(),
-                    ip: "example.com".into(),
-                    user: Some("alice".into()),
-                    port: Some(2200),
-                    cmd: Some("echo hello".into()),
-                }],
-            }],
-        };
-
-        let app = App::new(config);
-        let command = app.selected_host_command().expect("command should exist");
-        assert_eq!(command.get_program(), "sh");
+    fn edit_mode_toggles() {
+        let mut app = fixture();
+        app.enter_edit_mode();
+        assert!(matches!(app.mode, super::Mode::Edit));
+        app.exit_edit_mode();
+        assert!(matches!(app.mode, super::Mode::Browse));
     }
 }

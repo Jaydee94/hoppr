@@ -1,0 +1,23 @@
+{
+  "name": "hoppr-release-tooling",
+  "private": true,
+  "description": "Dev-only Node tooling for hoppr — semantic-release and commitlint.",
+  "scripts": {
+    "prepare": "husky || true",
+    "release": "semantic-release",
+    "commitlint": "commitlint --from=HEAD~1"
+  },
+  "devDependencies": {
+    "@commitlint/cli": "^19.0.0",
+    "@commitlint/config-conventional": "^19.0.0",
+    "@semantic-release/changelog": "^6.0.3",
+    "@semantic-release/commit-analyzer": "^13.0.0",
+    "@semantic-release/exec": "^6.0.3",
+    "@semantic-release/git": "^10.0.1",
+    "@semantic-release/github": "^11.0.0",
+    "@semantic-release/release-notes-generator": "^14.0.0",
+    "conventional-changelog-conventionalcommits": "^8.0.0",
+    "husky": "^9.0.0",
+    "semantic-release": "^24.0.0"
+  }
+}

@@ -1,1 +1,15 @@
 /target
+/dist
+node_modules
+.husky/_
+
+# editor / OS
+.idea/
+.vscode/
+.DS_Store
+*.swp
+*~
+
+# logs / local state
+*.log
+.hoppr/
