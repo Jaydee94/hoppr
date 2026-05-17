@@ -1,6 +1,5 @@
 use std::{
     cmp::Reverse,
-    fs,
     io::{self, Stdout, Write},
     path::{Path, PathBuf},
     process::{Command, Stdio},
@@ -29,7 +28,7 @@ mod ui;
 
 use app::{App, Focus, Mode};
 use cli::{Cli, Command as CliCommand, ConfigCmd, ConnectArgs, ListArgs, ListFormat, SyncCmd};
-use config::{default_config_path, Category, Config, Host};
+use config::{default_config_path, Category, Config, Host, Inventory};
 use editor::{CategoryForm, EditorState, EditorView, HostForm, MENU_ITEMS};
 use sync::{SyncContext, SyncStatus};
 
@@ -81,16 +80,16 @@ fn load_with_sync(cli: &Cli, config_path: &Path) -> Result<(Config, SyncStatus)>
                 match sync::ensure_repo(&ctx) {
                     Ok(s) => {
                         status = s;
-                        // If the tracked path lives in the synced repo and the
-                        // local config does not exist, link it through.
-                        if !config_path.exists() && ctx.tracked_path().exists() {
-                            if let Some(parent) = config_path.parent() {
-                                fs::create_dir_all(parent).ok();
+                        let tracked = ctx.tracked_path();
+                        if tracked.exists() {
+                            match Inventory::load_from_path(&tracked) {
+                                Ok(inv) => config.apply_inventory(inv),
+                                Err(err) => {
+                                    eprintln!("hoppr: shared inventory unreadable — {err:#}");
+                                    status = SyncStatus::Failed;
+                                }
                             }
-                            fs::copy(ctx.tracked_path(), config_path)?;
                         }
-                        // Reload from the (possibly updated) local config.
-                        config = Config::load_or_default(config_path)?;
                     }
                     Err(err) => {
                         eprintln!("hoppr: sync failed — {err:#}");
@@ -484,16 +483,13 @@ fn save_config(app: &mut App) -> Result<()> {
     if let Some(sync_cfg) = app.config.sync.as_ref() {
         if sync_cfg.auto_push.unwrap_or(false) {
             if let Some(ctx) = SyncContext::from(sync_cfg) {
-                // Copy the local config into the tracked path then push.
-                let tracked = ctx.tracked_path();
-                if let Some(parent) = tracked.parent() {
-                    fs::create_dir_all(parent).ok();
-                }
-                fs::copy(&app.config_path, &tracked).ok();
-                if let Err(err) = sync::commit_and_push(&ctx, "chore: update hoppr config") {
-                    app.set_status(format!("Auto-push failed: {err:#}"));
-                } else {
-                    app.set_status("Auto-pushed to upstream");
+                let inventory = app.config.to_inventory();
+                let outcome = inventory
+                    .save_to_path(ctx.tracked_path())
+                    .and_then(|()| sync::commit_and_push(&ctx, "chore: update hoppr inventory"));
+                match outcome {
+                    Ok(()) => app.set_status("Auto-pushed inventory upstream"),
+                    Err(err) => app.set_status(format!("Auto-push failed: {err:#}")),
                 }
             }
         }
@@ -580,14 +576,9 @@ fn run_sync_cmd(cmd: SyncCmd, _cli: &Cli, config_path: &Path) -> Result<()> {
             println!("pull: {}", status.label());
         }
         SyncCmd::Push { message } => {
-            // Copy local config into the tracked path first.
-            let tracked = ctx.tracked_path();
-            if let Some(parent) = tracked.parent() {
-                fs::create_dir_all(parent).ok();
-            }
-            if config_path.exists() {
-                fs::copy(config_path, &tracked).context("copy local config into tracked path")?;
-            }
+            cfg.to_inventory()
+                .save_to_path(ctx.tracked_path())
+                .context("write inventory into tracked path")?;
             sync::commit_and_push(&ctx, &message)?;
             println!("pushed to {}@{}", ctx.repo_url, ctx.branch);
         }

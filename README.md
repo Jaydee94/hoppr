@@ -36,7 +36,7 @@ $ hoppr sync push  # commit + push your local edits upstream
 
 - **Fast TUI** — built on [ratatui](https://github.com/ratatui-org/ratatui), opens in < 50 ms.
 - **In-TUI settings** — add hosts, edit categories, change defaults, save to YAML. No shelling out to an editor.
-- **Central git config** — point at a repo URL; hoppr auto-clones, fast-forward pulls on every launch, pushes when you want.
+- **Team inventory in git** — point at a repo URL; hoppr auto-clones, fast-forward pulls the shared categories & hosts on every launch, pushes the inventory subset when you want. Your local `defaults` and `sync` settings stay on your machine.
 - **Pluggable connect command** — defaults to `ssh`, supports `mosh`, `telnet`, `kitty +kitten ssh`, raw shell, or any custom template with `{user}` `{host}` `{port}` placeholders.
 - **CLI parity** — every TUI action is also a subcommand (`connect`, `list`, `sync`, `config`).
 - **Cross-platform** — Linux, macOS, Windows. Single static binary.

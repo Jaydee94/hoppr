@@ -178,6 +178,69 @@ impl Config {
     pub fn sync_enabled(&self) -> bool {
         self.sync.as_ref().and_then(|s| s.repo.as_deref()).is_some()
     }
+
+    /// Replace the in-memory host inventory (categories + hosts) with the one
+    /// pulled from the central repo. Local `defaults` and `sync` settings are
+    /// left untouched — those are per-machine.
+    pub fn apply_inventory(&mut self, inv: Inventory) {
+        self.categories = inv.categories;
+    }
+
+    /// Extract the shared subset that gets pushed to the central repo. Sync
+    /// configuration and connection defaults stay on the local machine.
+    pub fn to_inventory(&self) -> Inventory {
+        Inventory {
+            categories: self.categories.clone(),
+        }
+    }
+}
+
+/// The shared host inventory — the slice of the configuration that lives in
+/// the central git repo so a team can publish a common set of VMs and
+/// categories. Unknown fields are tolerated so a repo that still holds a full
+/// `Config` snapshot keeps loading (we just pick out `categories`).
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Inventory {
+    pub categories: Vec<Category>,
+}
+
+impl Inventory {
+    pub fn load_from_path<P: AsRef<Path>>(path: P) -> Result<Self> {
+        let path = path.as_ref();
+        let content = fs::read_to_string(path)
+            .with_context(|| format!("failed to read inventory file: {}", path.display()))?;
+
+        if content.trim().is_empty() {
+            return Ok(Self::default());
+        }
+
+        serde_yaml::from_str::<Self>(&content)
+            .with_context(|| format!("invalid YAML in inventory file: {}", path.display()))
+    }
+
+    pub fn save_to_path<P: AsRef<Path>>(&self, path: P) -> Result<()> {
+        let path = path.as_ref();
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent)
+                .with_context(|| format!("failed to create inventory dir: {}", parent.display()))?;
+        }
+        let yaml = serde_yaml::to_string(self).context("failed to serialize inventory")?;
+
+        let parent = path.parent().unwrap_or_else(|| Path::new("."));
+        let file_name = path
+            .file_name()
+            .map(|n| n.to_owned())
+            .unwrap_or_else(|| std::ffi::OsString::from("inventory.yaml"));
+        let mut tmp = parent.join(&file_name);
+        tmp.as_mut_os_string().push(".tmp");
+
+        fs::write(&tmp, yaml)
+            .with_context(|| format!("failed to stage inventory file: {}", tmp.display()))?;
+        fs::rename(&tmp, path)
+            .with_context(|| format!("failed to write inventory file: {}", path.display()))?;
+        Ok(())
+    }
 }
 
 pub fn project_dirs() -> Option<ProjectDirs> {
@@ -276,6 +339,96 @@ categories: []
         let cfg = Config::load_from_path(&path).expect("parse yaml");
         assert_eq!(cfg.defaults.command.program(), "mosh");
         assert_eq!(cfg.defaults.command.args().unwrap().len(), 2);
+    }
+
+    #[test]
+    fn inventory_picks_only_categories_from_full_config() {
+        let tmp = TempDir::new().expect("tempdir");
+        let path = tmp.path().join("hoppr.yaml");
+        fs::write(
+            &path,
+            r#"
+defaults:
+  command: ssh
+  port: 4242
+sync:
+  repo: git@example.com:team/cfg.git
+categories:
+  - name: prod
+    icon: "🛰"
+    hosts:
+      - name: app-1
+        ip: 10.0.0.10
+        user: ops
+"#,
+        )
+        .expect("write yaml");
+
+        let inv = Inventory::load_from_path(&path).expect("load inventory");
+        assert_eq!(inv.categories.len(), 1);
+        assert_eq!(inv.categories[0].hosts[0].name, "app-1");
+    }
+
+    #[test]
+    fn apply_inventory_keeps_local_defaults_and_sync() {
+        let mut cfg = Config {
+            defaults: Defaults {
+                command: ConnectCommand::Program("mosh".into()),
+                port: 2222,
+                user: Some("me".into()),
+            },
+            sync: Some(SyncConfig {
+                repo: Some("git@example.com:team/cfg.git".into()),
+                ..Default::default()
+            }),
+            categories: vec![Category {
+                name: "stale".into(),
+                ..Default::default()
+            }],
+        };
+
+        let inv = Inventory {
+            categories: vec![Category {
+                name: "fresh".into(),
+                icon: None,
+                hosts: vec![Host {
+                    name: "edge".into(),
+                    ip: "10.0.0.5".into(),
+                    ..Default::default()
+                }],
+            }],
+        };
+        cfg.apply_inventory(inv);
+
+        assert_eq!(cfg.categories.len(), 1);
+        assert_eq!(cfg.categories[0].name, "fresh");
+        assert_eq!(cfg.defaults.port, 2222);
+        assert_eq!(cfg.defaults.command.program(), "mosh");
+        assert!(cfg.sync.as_ref().and_then(|s| s.repo.as_deref()).is_some());
+    }
+
+    #[test]
+    fn inventory_round_trips_via_disk() {
+        let tmp = TempDir::new().expect("tempdir");
+        let path = tmp.path().join("nested").join("hoppr.yaml");
+        let inv = Inventory {
+            categories: vec![Category {
+                name: "lab".into(),
+                icon: Some("🧪".into()),
+                hosts: vec![Host {
+                    name: "bench".into(),
+                    ip: "192.168.0.42".into(),
+                    user: Some("alice".into()),
+                    port: Some(2222),
+                    cmd: None,
+                    command: None,
+                }],
+            }],
+        };
+        inv.save_to_path(&path).expect("save inventory");
+        let reloaded = Inventory::load_from_path(&path).expect("reload inventory");
+        assert_eq!(reloaded.categories.len(), 1);
+        assert_eq!(reloaded.categories[0].hosts[0].port, Some(2222));
     }
 
     #[test]
