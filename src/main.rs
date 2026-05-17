@@ -1,7 +1,7 @@
 use std::{
-    fs,
+    cmp::Reverse,
     io::{self, Stdout, Write},
-    path::PathBuf,
+    path::{Path, PathBuf},
     process::{Command, Stdio},
     time::Duration,
 };
@@ -28,7 +28,7 @@ mod ui;
 
 use app::{App, Focus, Mode};
 use cli::{Cli, Command as CliCommand, ConfigCmd, ConnectArgs, ListArgs, ListFormat, SyncCmd};
-use config::{default_config_path, Category, Config, Host};
+use config::{default_config_path, Category, Config, Host, Inventory};
 use editor::{CategoryForm, EditorState, EditorView, HostForm, MENU_ITEMS};
 use sync::{SyncContext, SyncStatus};
 
@@ -65,7 +65,7 @@ fn resolve_config_path(cli: &Cli) -> Result<PathBuf> {
     Ok(path)
 }
 
-fn load_with_sync(cli: &Cli, config_path: &PathBuf) -> Result<(Config, SyncStatus)> {
+fn load_with_sync(cli: &Cli, config_path: &Path) -> Result<(Config, SyncStatus)> {
     let mut config = Config::load_or_default(config_path)?;
     let mut status = if config.sync_enabled() {
         SyncStatus::UpToDate
@@ -80,16 +80,16 @@ fn load_with_sync(cli: &Cli, config_path: &PathBuf) -> Result<(Config, SyncStatu
                 match sync::ensure_repo(&ctx) {
                     Ok(s) => {
                         status = s;
-                        // If the tracked path lives in the synced repo and the
-                        // local config does not exist, link it through.
-                        if !config_path.exists() && ctx.tracked_path().exists() {
-                            if let Some(parent) = config_path.parent() {
-                                fs::create_dir_all(parent).ok();
+                        let tracked = ctx.tracked_path();
+                        if tracked.exists() {
+                            match Inventory::load_from_path(&tracked) {
+                                Ok(inv) => config.apply_inventory(inv),
+                                Err(err) => {
+                                    eprintln!("hoppr: shared inventory unreadable — {err:#}");
+                                    status = SyncStatus::Failed;
+                                }
                             }
-                            fs::copy(ctx.tracked_path(), config_path)?;
                         }
-                        // Reload from the (possibly updated) local config.
-                        config = Config::load_or_default(config_path)?;
                     }
                     Err(err) => {
                         eprintln!("hoppr: sync failed — {err:#}");
@@ -233,12 +233,10 @@ fn handle_editor_event(app: &mut App, code: KeyCode, ctrl: bool) -> Result<bool>
                     editor.view = EditorView::CategoryForm;
                 }
             }
-            KeyCode::Char('d') => {
-                if !app.config.categories.is_empty() {
-                    app.config.categories.remove(editor.categories_index);
-                    editor.dirty = true;
-                    editor.flash("Category removed");
-                }
+            KeyCode::Char('d') if !app.config.categories.is_empty() => {
+                app.config.categories.remove(editor.categories_index);
+                editor.dirty = true;
+                editor.flash("Category removed");
             }
             KeyCode::Char('s') if editor.dirty => save_config(app)?,
             _ => {}
@@ -272,11 +270,9 @@ fn handle_editor_event(app: &mut App, code: KeyCode, ctrl: bool) -> Result<bool>
                     .max(1);
                 editor.hosts_index = (editor.hosts_index + 1) % len;
             }
-            KeyCode::Char('a') => {
-                if !app.config.categories.is_empty() {
-                    editor.host_form = Some(HostForm::new_create(editor.categories_index));
-                    editor.view = EditorView::HostForm;
-                }
+            KeyCode::Char('a') if !app.config.categories.is_empty() => {
+                editor.host_form = Some(HostForm::new_create(editor.categories_index));
+                editor.view = EditorView::HostForm;
             }
             KeyCode::Char('r') | KeyCode::Enter => {
                 if let Some(host) = app
@@ -487,16 +483,13 @@ fn save_config(app: &mut App) -> Result<()> {
     if let Some(sync_cfg) = app.config.sync.as_ref() {
         if sync_cfg.auto_push.unwrap_or(false) {
             if let Some(ctx) = SyncContext::from(sync_cfg) {
-                // Copy the local config into the tracked path then push.
-                let tracked = ctx.tracked_path();
-                if let Some(parent) = tracked.parent() {
-                    fs::create_dir_all(parent).ok();
-                }
-                fs::copy(&app.config_path, &tracked).ok();
-                if let Err(err) = sync::commit_and_push(&ctx, "chore: update hoppr config") {
-                    app.set_status(format!("Auto-push failed: {err:#}"));
-                } else {
-                    app.set_status("Auto-pushed to upstream");
+                let inventory = app.config.to_inventory();
+                let outcome = inventory
+                    .save_to_path(ctx.tracked_path())
+                    .and_then(|()| sync::commit_and_push(&ctx, "chore: update hoppr inventory"));
+                match outcome {
+                    Ok(()) => app.set_status("Auto-pushed inventory upstream"),
+                    Err(err) => app.set_status(format!("Auto-push failed: {err:#}")),
                 }
             }
         }
@@ -506,7 +499,7 @@ fn save_config(app: &mut App) -> Result<()> {
 
 // ─── headless subcommands ───────────────────────────────────────────────────
 
-fn run_config_cmd(cmd: ConfigCmd, config_path: &PathBuf) -> Result<()> {
+fn run_config_cmd(cmd: ConfigCmd, config_path: &Path) -> Result<()> {
     match cmd {
         ConfigCmd::Path => {
             println!("{}", config_path.display());
@@ -567,7 +560,7 @@ fn starter_config() -> Config {
     }
 }
 
-fn run_sync_cmd(cmd: SyncCmd, _cli: &Cli, config_path: &PathBuf) -> Result<()> {
+fn run_sync_cmd(cmd: SyncCmd, _cli: &Cli, config_path: &Path) -> Result<()> {
     let cfg = Config::load_or_default(config_path)?;
     let sync_cfg = cfg.sync.as_ref().ok_or_else(|| {
         anyhow!(
@@ -583,14 +576,9 @@ fn run_sync_cmd(cmd: SyncCmd, _cli: &Cli, config_path: &PathBuf) -> Result<()> {
             println!("pull: {}", status.label());
         }
         SyncCmd::Push { message } => {
-            // Copy local config into the tracked path first.
-            let tracked = ctx.tracked_path();
-            if let Some(parent) = tracked.parent() {
-                fs::create_dir_all(parent).ok();
-            }
-            if config_path.exists() {
-                fs::copy(config_path, &tracked).context("copy local config into tracked path")?;
-            }
+            cfg.to_inventory()
+                .save_to_path(ctx.tracked_path())
+                .context("write inventory into tracked path")?;
             sync::commit_and_push(&ctx, &message)?;
             println!("pushed to {}@{}", ctx.repo_url, ctx.branch);
         }
@@ -747,6 +735,6 @@ fn find_host(config: &Config, query: &str) -> Option<Host> {
             matcher.fuzzy_match(&hay, query).map(|s| (s, h))
         })
         .collect();
-    scored.sort_by(|a, b| b.0.cmp(&a.0));
+    scored.sort_by_key(|(score, _)| Reverse(*score));
     scored.first().map(|(_, h)| (*h).clone())
 }

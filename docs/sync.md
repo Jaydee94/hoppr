@@ -1,6 +1,15 @@
 # Central repo sync
 
-`hoppr` can keep its config file in a private git repository so the same host list works across every machine you log into.
+`hoppr` can keep a shared **inventory** — categories and hosts — in a private git repository so a team works off the same set of VMs while each member keeps their own local preferences.
+
+## What is shared, what is local
+
+| lives in the synced repo (shared) | lives in the local `config.yaml` (per-machine) |
+| --------------------------------- | ---------------------------------------------- |
+| `categories[]` (with their hosts) | `sync` settings (URL, branch, path, auto-pull) |
+|                                   | `defaults` (default `command`, port, user)     |
+
+The synced file is an **inventory**, not a full configuration. Connection defaults, the sync stanza itself, and any other per-user setting never leave the local machine. New team members bootstrap by setting their own `sync.repo` and getting the team's hosts populated on first launch.
 
 ## How it works
 
@@ -8,10 +17,10 @@ When `sync.repo` is set, every launch of `hoppr` does:
 
 1. If `~/.local/share/hoppr/config-repo` (or your `sync.local`) doesn't exist, **clone** it.
 2. Otherwise, **fast-forward pull** the configured branch (skipped when `auto_pull: false`).
-3. Copy the tracked file out of the clone into the active config location, if the local file is missing.
-4. Load the YAML and continue normally.
+3. Read the tracked file as an inventory and replace the in-memory `categories` with what the team published.
+4. Continue with the merged configuration (local `defaults` + shared `categories`).
 
-Writes go the other direction — the active config is the source of truth. Use `hoppr sync push` (or set `auto_push: true`) to copy it back into the clone, commit, and push to the remote.
+Writes go the other direction — the local categories are the source of truth. Use `hoppr sync push` (or set `auto_push: true`) to write the inventory subset back into the clone, commit, and push. Your `defaults` and `sync` stanzas stay out of the repo.
 
 git operations use **libgit2** (vendored). There is no runtime dependency on the system `git` binary.
 
@@ -19,9 +28,9 @@ git operations use **libgit2** (vendored). There is no runtime dependency on the
 
 ```yaml
 sync:
-  repo: git@github.com:you/hoppr-config.git    # required to enable sync
+  repo: git@github.com:you/hoppr-inventory.git  # required to enable sync
   branch: main                                  # default: main
-  path: config.yaml                             # default: config.yaml
+  path: config.yaml                             # default: config.yaml — points at the inventory file in the repo
   local: ~/.local/share/hoppr/config-repo       # default: platform data dir
   auto_pull: true                               # default: true
   auto_push: false                              # default: false
@@ -31,10 +40,33 @@ sync:
 | ----------- | ------------------------------------ | --------------------------------------------------------------------- |
 | `repo`      | _none_                               | When unset, sync is disabled. HTTPS or SSH URL.                       |
 | `branch`    | `main`                               | Must already exist on the remote.                                     |
-| `path`      | `config.yaml`                        | File path inside the repo. Multiple machines can share one repo with different file paths for different roles. |
+| `path`      | `config.yaml`                        | Inventory file path inside the repo. Multiple roles can share one repo with different file paths. |
 | `local`     | platform data dir                    | Where hoppr clones the repo. `~` expansion is supported.              |
 | `auto_pull` | `true` when `repo` is set            | Set to `false` to bypass the pull on every launch.                    |
 | `auto_push` | `false`                              | When `true`, in-TUI saves are committed and pushed automatically.     |
+
+## Inventory file format
+
+The synced file contains only the shared categories:
+
+```yaml
+categories:
+  - name: Production
+    icon: "🚀"
+    hosts:
+      - name: prod-gateway
+        ip: 10.4.0.1
+        user: deploy
+      - name: prod-db
+        ip: 10.4.0.10
+        user: ops
+  - name: Staging
+    hosts:
+      - name: stage-1
+        ip: 10.5.0.1
+```
+
+Any additional top-level keys in the file (left over from an older full-config layout, for example) are ignored — only `categories` is read.
 
 ## Credentials
 
@@ -78,13 +110,13 @@ diffs as carefully as you'd review a `.bashrc` change.
 
 ## Recommended layout
 
-Many users keep a single private repo with per-machine files:
+Teams typically keep a single private repo with role-scoped inventories:
 
 ```
-my-hoppr-config/
-  laptop.yaml
-  workstation.yaml
-  jump-host.yaml
+my-hoppr-inventory/
+  prod.yaml         # what the on-call rotation needs
+  lab.yaml          # what every engineer can hop into
+  jump-hosts.yaml   # bastions only
 ```
 
-…then point each machine's `sync.path` at the right file.
+…then each machine points its `sync.path` at the inventory file relevant to that role. Connection defaults and the `sync` stanza stay in the machine's local `config.yaml` and never reach the repo.
