@@ -104,7 +104,14 @@ jobs:
           if [ -n "$VERSION" ]; then
             sed -i.bak -E "s/^version = \".*\"/version = \"$VERSION\"/" Cargo.toml
             rm Cargo.toml.bak
+            # Keep Cargo.lock consistent so --locked succeeds in the build step.
+            # cargo update -p hoppr updates only the root-package version entry;
+            # no dependency versions are changed.
+            cargo update -p hoppr
           fi
+      - name: install NASM (Windows)
+        if: runner.os == 'Windows'
+        uses: ilammy/setup-nasm@v1
       - name: install cross
         if: matrix.cross
         run: cargo install cross --locked
