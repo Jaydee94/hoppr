@@ -45,7 +45,9 @@ jobs:
           # semantic-release --dry-run emits "The next release version is X.Y.Z"
           DRY_OUTPUT="$(npx semantic-release --dry-run --no-ci 2>&1 || true)"
           echo "$DRY_OUTPUT"
-          VERSION="$(echo "$DRY_OUTPUT" | grep -oE 'next release version is [0-9]+\.[0-9]+\.[0-9]+' | tail -n1 | awk '{print $5}')"
+          # grep exits 1 when there is no match; || true keeps pipefail from
+          # killing the script so the empty-VERSION branch below can run.
+          VERSION="$(echo "$DRY_OUTPUT" | grep -oE 'next release version is [0-9]+\.[0-9]+\.[0-9]+' | tail -n1 | awk '{print $5}' || true)"
           if [ -z "$VERSION" ]; then
             echo "will_release=false" >> "$GITHUB_OUTPUT"
             echo "version=" >> "$GITHUB_OUTPUT"
