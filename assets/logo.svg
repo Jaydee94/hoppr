@@ -1,0 +1,44 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" role="img" aria-label="hoppr logo">
+  <title>hoppr</title>
+  <defs>
+    <linearGradient id="g" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#7c5cff"/>
+      <stop offset="100%" stop-color="#00e5ff"/>
+    </linearGradient>
+    <linearGradient id="ring" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#a78aff" stop-opacity="0.9"/>
+      <stop offset="100%" stop-color="#7c5cff" stop-opacity="0"/>
+    </linearGradient>
+    <filter id="glow" x="-30%" y="-30%" width="160%" height="160%">
+      <feGaussianBlur stdDeviation="4" result="b"/>
+      <feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+  </defs>
+
+  <!-- canvas: dark rounded tile -->
+  <rect x="8" y="8" width="240" height="240" rx="56" fill="#0a0b10"/>
+  <rect x="8" y="8" width="240" height="240" rx="56" fill="none" stroke="url(#ring)" stroke-width="1.5"/>
+
+  <!-- two terminal "pads" connected by a parabolic hop -->
+  <g filter="url(#glow)">
+    <!-- left pad -->
+    <rect x="44" y="148" width="56" height="14" rx="4" fill="url(#g)"/>
+    <!-- right pad -->
+    <rect x="156" y="148" width="56" height="14" rx="4" fill="url(#g)"/>
+
+    <!-- hop arc: from left pad to right pad -->
+    <path d="M 72 148 Q 128 56 184 148"
+          fill="none" stroke="url(#g)" stroke-width="6"
+          stroke-linecap="round"/>
+
+    <!-- traveling node at apex -->
+    <circle cx="128" cy="78" r="10" fill="#a78aff"/>
+    <circle cx="128" cy="78" r="14" fill="none" stroke="#00e5ff" stroke-width="2" opacity="0.6"/>
+  </g>
+
+  <!-- prompt caret (mark of a terminal app) -->
+  <g fill="#f1f3f9">
+    <rect x="72" y="190" width="10" height="18" rx="2"/>
+    <rect x="86" y="190" width="32" height="3" rx="1.5" opacity="0.6"/>
+  </g>
+</svg>
