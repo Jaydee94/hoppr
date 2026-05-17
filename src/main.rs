@@ -178,7 +178,6 @@ fn event_loop(terminal: &mut Terminal<CrosstermBackend<Stdout>>, app: &mut App) 
             continue;
         }
         let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
-        let shift = key.modifiers.contains(KeyModifiers::SHIFT);
 
         match app.mode {
             Mode::Browse => match key.code {
@@ -220,12 +219,12 @@ fn event_loop(terminal: &mut Terminal<CrosstermBackend<Stdout>>, app: &mut App) 
                         app.ensure_valid_selection();
                     }
                 }
+                // Open in new terminal tab
+                KeyCode::Char('t') if app.focus == Focus::Hosts && app.terminal.is_available() => {
+                    ssh_spawn(app)?;
+                }
                 KeyCode::Enter if app.focus == Focus::Hosts => {
-                    if shift && app.terminal.is_available() {
-                        ssh_spawn(app)?;
-                    } else {
-                        ssh_handoff(terminal, app)?;
-                    }
+                    ssh_handoff(terminal, app)?;
                 }
                 _ => {}
             },
