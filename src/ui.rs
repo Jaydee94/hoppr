@@ -305,6 +305,7 @@ fn draw_hints(frame: &mut Frame<'_>, app: &App, theme: &Theme, area: Rect) {
             if app.focus == Focus::Search {
                 h.push(("⌃A", "All cats"));
             }
+            h.push(("e", "Settings"));
             h.push(("f", "Star"));
             h.push(("↩", "Connect"));
             if app.terminal.is_available() {
