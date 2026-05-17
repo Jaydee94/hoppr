@@ -17,14 +17,14 @@ anyhow = "1"
 clap = { version = "4", features = ["derive", "env", "wrap_help"] }
 clap_complete = "4"
 crossterm = "0.29"
-directories = "5"
+directories = "6"
 fuzzy-matcher = "0.3"
-git2 = { version = "0.19", default-features = false, features = ["https", "vendored-libgit2", "vendored-openssl"] }
-ratatui = "0.29"
+git2 = { version = "0.20", default-features = false, features = ["https", "vendored-libgit2", "vendored-openssl"] }
+ratatui = "0.30"
 serde = { version = "1", features = ["derive"] }
 serde_yaml = "0.9"
 shellexpand = "3"
-thiserror = "1"
+thiserror = "2"
 time = { version = "0.3", features = ["formatting", "macros", "local-offset"] }
 
 [dev-dependencies]

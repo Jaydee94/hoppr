@@ -123,8 +123,8 @@ fn draw_body(frame: &mut Frame<'_>, app: &mut App, theme: &Theme, area: Rect) {
         .constraints([Constraint::Percentage(30), Constraint::Percentage(70)])
         .split(area);
 
-    let mut categories_state = app.categories_state.clone();
-    let mut hosts_state = app.hosts_state.clone();
+    let mut categories_state = app.categories_state;
+    let mut hosts_state = app.hosts_state;
 
     let categories = build_categories(app, theme);
     frame.render_stateful_widget(categories, split[0], &mut categories_state);
