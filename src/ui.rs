@@ -315,11 +315,7 @@ fn draw_hints(frame: &mut Frame<'_>, app: &App, theme: &Theme, area: Rect) {
             h
         }
         Mode::Edit => match app.editor.as_ref().map(|e| e.view) {
-            Some(EditorView::Menu) => vec![
-                ("↑↓", "Move"),
-                ("↩", "Select"),
-                ("Esc", "Exit"),
-            ],
+            Some(EditorView::Menu) => vec![("↑↓", "Move"), ("↩", "Select"), ("Esc", "Exit")],
             Some(EditorView::Categories) => vec![
                 ("↑↓", "Move"),
                 ("↩", "Edit"),
@@ -337,11 +333,9 @@ fn draw_hints(frame: &mut Frame<'_>, app: &App, theme: &Theme, area: Rect) {
                 ("s", "Save"),
                 ("Esc", "Back"),
             ],
-            Some(EditorView::CategoryForm) | Some(EditorView::HostForm) => vec![
-                ("↑↓", "Move"),
-                ("↩", "Confirm"),
-                ("Esc", "Cancel"),
-            ],
+            Some(EditorView::CategoryForm) | Some(EditorView::HostForm) => {
+                vec![("↑↓", "Move"), ("↩", "Confirm"), ("Esc", "Cancel")]
+            }
             Some(EditorView::Defaults) | Some(EditorView::Sync) => vec![
                 ("↑↓", "Move"),
                 ("↩", "Apply"),
