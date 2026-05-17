@@ -67,8 +67,16 @@ try {
     Copy-Item -Path $ExtractedBinary.FullName -Destination $BinaryPath -Force
 
     $UserPath = [Environment]::GetEnvironmentVariable('PATH', 'User')
-    if ($UserPath -notlike "*$InstallDir*") {
-        [Environment]::SetEnvironmentVariable('PATH', "$UserPath;$InstallDir", 'User')
+    $PathEntries = ($UserPath -split ';') | Where-Object { $_ -ne '' }
+    if ($PathEntries -notcontains $InstallDir) {
+        try {
+            $NewPath = if ([string]::IsNullOrEmpty($UserPath)) { $InstallDir } else { "$UserPath;$InstallDir" }
+            [Environment]::SetEnvironmentVariable('PATH', $NewPath, 'User')
+        } catch {
+            Write-Host ''
+            Write-Host "Warning: Could not add $InstallDir to PATH automatically: $_"
+            Write-Host "Add it manually: [System.Environment]::SetEnvironmentVariable('PATH', `"`$env:PATH;$InstallDir`", 'User')"
+        }
         Write-Host ''
         Write-Host "Added $InstallDir to your user PATH."
         Write-Host 'Open a new terminal for PATH changes to take effect.'
