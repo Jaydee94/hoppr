@@ -53,6 +53,9 @@ pub enum Command {
     #[command(subcommand)]
     Sync(SyncCmd),
 
+    /// Show recent connection history.
+    History(HistoryArgs),
+
     /// Print shell completion script.
     Completions {
         /// Shell flavour.
@@ -130,6 +133,17 @@ pub enum SyncCmd {
     },
     /// Show sync configuration and current state.
     Status,
+}
+
+#[derive(Debug, clap::Args)]
+pub struct HistoryArgs {
+    /// Maximum number of entries to show.
+    #[arg(short = 'n', long, default_value_t = 20)]
+    pub limit: usize,
+
+    /// Output format.
+    #[arg(short = 'o', long, value_enum, default_value_t = ListFormat::Table)]
+    pub format: ListFormat,
 }
 
 impl Cli {

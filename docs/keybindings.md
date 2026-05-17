@@ -12,8 +12,20 @@
 | `↑` / `k`            | Previous item                                               |
 | `↓` / `j`            | Next item                                                   |
 | `Enter`              | When in Hosts: connect. When in Search: confirm and return. |
+| `Shift+Enter`        | Open connection in a new terminal window (if detected).     |
+| `f`                  | Toggle star / favorite on the selected host.                |
+| `Ctrl+A`             | Toggle global search (all categories vs. current only).     |
 | `e`                  | Open the in-TUI settings menu                               |
 | `Backspace`          | When in Search: delete a character                          |
+
+### Virtual categories
+
+Two virtual categories appear at the top of the category list when they have content:
+
+- **🕒 Recent** — last 10 connections you made (persisted across sessions).
+- **★ Starred** — hosts you marked with `f`. Select a host and press `f` again to unstar.
+
+Both virtual categories support the normal search query and vim navigation.
 
 ## Edit mode (settings)
 

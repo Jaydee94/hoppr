@@ -22,15 +22,23 @@ mod cli;
 mod config;
 mod connect;
 mod editor;
+mod favorites;
+mod history;
 mod sync;
+mod terminal;
 mod theme;
 mod ui;
 
 use app::{App, Focus, Mode};
-use cli::{Cli, Command as CliCommand, ConfigCmd, ConnectArgs, ListArgs, ListFormat, SyncCmd};
+use cli::{
+    Cli, Command as CliCommand, ConfigCmd, ConnectArgs, HistoryArgs, ListArgs, ListFormat, SyncCmd,
+};
 use config::{default_config_path, Category, Config, Host, Inventory};
 use editor::{CategoryForm, EditorState, EditorView, HostForm, MENU_ITEMS};
+use favorites::FavoritesStore;
+use history::{default_history_path, HistoryStore};
 use sync::{SyncContext, SyncStatus};
+use terminal::TerminalLauncher;
 
 fn main() -> Result<()> {
     let mut cli = Cli::parse_cli();
@@ -52,6 +60,10 @@ fn main() -> Result<()> {
         Some(CliCommand::Connect(args)) => {
             let (cfg, _) = load_with_sync(&cli, &config_path)?;
             run_connect(args, &cfg)
+        }
+        Some(CliCommand::History(args)) => {
+            let history = HistoryStore::load(&default_history_path());
+            run_history(args, &history)
         }
         Some(CliCommand::Tui) | None => {
             let (cfg, status) = load_with_sync(&cli, &config_path)?;
@@ -103,7 +115,18 @@ fn load_with_sync(cli: &Cli, config_path: &Path) -> Result<(Config, SyncStatus)>
 }
 
 fn run_tui(config: Config, config_path: PathBuf, status: SyncStatus) -> Result<()> {
-    let mut app = App::new(config, config_path, status);
+    let history = HistoryStore::load(&default_history_path());
+    let favorites = FavoritesStore::load(&favorites::default_favorites_path());
+    let terminal_launcher = TerminalLauncher::detect(config.defaults.terminal_command.as_deref());
+    let mut app = App::new(
+        config,
+        config_path,
+        status,
+        history,
+        favorites,
+        terminal_launcher,
+    );
+
     let mut terminal = setup_terminal()?;
     let run_result = event_loop(&mut terminal, &mut app);
     let restore_result = restore_terminal(terminal);
@@ -141,6 +164,7 @@ fn event_loop(terminal: &mut Terminal<CrosstermBackend<Stdout>>, app: &mut App) 
             continue;
         }
         let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
+        let shift = key.modifiers.contains(KeyModifiers::SHIFT);
 
         match app.mode {
             Mode::Browse => match key.code {
@@ -154,9 +178,40 @@ fn event_loop(terminal: &mut Terminal<CrosstermBackend<Stdout>>, app: &mut App) 
                 KeyCode::Down | KeyCode::Char('j') if app.focus != Focus::Search => app.next(),
                 KeyCode::Backspace if app.focus == Focus::Search => app.pop_search_char(),
                 KeyCode::Enter if app.focus == Focus::Search => app.clear_search_focus_hosts(),
+                // Global search toggle (Ctrl+A) — only meaningful in search mode
+                KeyCode::Char('a') if ctrl => {
+                    app.search_all = !app.search_all;
+                    app.hosts_state.select(Some(0));
+                    let label = if app.search_all {
+                        "Global search: all categories"
+                    } else {
+                        "Search: current category"
+                    };
+                    app.set_status(label);
+                }
                 KeyCode::Char(c) if app.focus == Focus::Search => app.append_search_char(c),
+                // Favorite toggle
+                KeyCode::Char('f') if app.focus == Focus::Hosts => {
+                    let host_cat = app
+                        .selected_host_with_category()
+                        .map(|(h, c)| (h.name.clone(), c.to_owned()));
+                    if let Some((host_name, cat_name)) = host_cat {
+                        let starred = app.favorites.toggle(&cat_name, &host_name);
+                        let _ = app.favorites.save();
+                        if starred {
+                            app.set_status(format!("★  {host_name} starred"));
+                        } else {
+                            app.set_status(format!("{host_name} removed from favorites"));
+                        }
+                        app.ensure_valid_selection();
+                    }
+                }
                 KeyCode::Enter if app.focus == Focus::Hosts => {
-                    ssh_handoff(terminal, app)?;
+                    if shift && app.terminal.is_available() {
+                        ssh_spawn(app)?;
+                    } else {
+                        ssh_handoff(terminal, app)?;
+                    }
                 }
                 _ => {}
             },
@@ -170,9 +225,16 @@ fn event_loop(terminal: &mut Terminal<CrosstermBackend<Stdout>>, app: &mut App) 
 }
 
 fn ssh_handoff(terminal: &mut Terminal<CrosstermBackend<Stdout>>, app: &mut App) -> Result<()> {
-    let Some(host) = app.selected_host().cloned() else {
+    let host_cat = app
+        .selected_host_with_category()
+        .map(|(h, c)| (h.clone(), c.to_owned()));
+    let Some((host, category_name)) = host_cat else {
         return Ok(());
     };
+
+    app.history.record(&host.name, &host.ip, &category_name);
+    let _ = app.history.save();
+
     let mut command = connect::build_command(&app.config, &host);
 
     disable_raw_mode()?;
@@ -187,6 +249,37 @@ fn ssh_handoff(terminal: &mut Terminal<CrosstermBackend<Stdout>>, app: &mut App)
     enable_raw_mode()?;
     execute!(io::stdout(), EnterAlternateScreen)?;
     terminal.clear()?;
+    Ok(())
+}
+
+/// Open the connection in a new terminal window without interrupting the TUI.
+fn ssh_spawn(app: &mut App) -> Result<()> {
+    let host_cat = app
+        .selected_host_with_category()
+        .map(|(h, c)| (h.clone(), c.to_owned()));
+    let Some((host, category_name)) = host_cat else {
+        return Ok(());
+    };
+
+    let command = connect::build_command(&app.config, &host);
+    let program = command.get_program().to_string_lossy().into_owned();
+    let args: Vec<String> = command
+        .get_args()
+        .map(|a| a.to_string_lossy().into_owned())
+        .collect();
+    let mut argv = vec![program];
+    argv.extend(args);
+
+    match app.terminal.spawn(&argv) {
+        Ok(()) => {
+            app.history.record(&host.name, &host.ip, &category_name);
+            let _ = app.history.save();
+            app.set_status(format!("Opened {} in new window", host.name));
+        }
+        Err(err) => {
+            app.set_status(format!("Terminal launch failed: {err:#}"));
+        }
+    }
     Ok(())
 }
 
@@ -622,7 +715,6 @@ fn run_list(args: ListArgs, config: &Config) -> Result<()> {
         }
         ListFormat::Json => {
             let filtered: Vec<_> = categories.into_iter().cloned().collect();
-            // serde_yaml→JSON via serde_json would add another dep; render manually.
             let mut out = String::from("[");
             for (i, c) in filtered.iter().enumerate() {
                 if i > 0 {
@@ -654,6 +746,68 @@ fn run_list(args: ListArgs, config: &Config) -> Result<()> {
                     )?;
                 }
             }
+        }
+    }
+    Ok(())
+}
+
+fn run_history(args: HistoryArgs, history: &HistoryStore) -> Result<()> {
+    let entries: Vec<_> = history.recent(args.limit).collect();
+
+    match args.format {
+        ListFormat::Table => {
+            let mut writer = io::stdout().lock();
+            writeln!(
+                writer,
+                "{:<25} {:<20} {:<20} CONNECTED",
+                "HOST", "IP", "CATEGORY"
+            )?;
+            for e in &entries {
+                writeln!(
+                    writer,
+                    "{:<25} {:<20} {:<20} {}",
+                    truncate(&e.host_name, 23),
+                    truncate(&e.ip, 18),
+                    truncate(&e.category, 18),
+                    e.connected_at_display()
+                )?;
+            }
+        }
+        ListFormat::Plain => {
+            for e in &entries {
+                println!("{}/{}\t{}", e.category, e.host_name, e.ip);
+            }
+        }
+        ListFormat::Json => {
+            let mut out = String::from("[");
+            for (i, e) in entries.iter().enumerate() {
+                if i > 0 {
+                    out.push(',');
+                }
+                out.push_str(&format!(
+                    "{{\"host\":{:?},\"ip\":{:?},\"category\":{:?},\"connected_at\":{:?}}}",
+                    e.host_name,
+                    e.ip,
+                    e.category,
+                    e.connected_at_display()
+                ));
+            }
+            out.push(']');
+            println!("{out}");
+        }
+        ListFormat::Yaml => {
+            let data: Vec<_> = entries
+                .iter()
+                .map(|e| {
+                    let mut m = serde_yaml::Mapping::new();
+                    m.insert("host".into(), e.host_name.clone().into());
+                    m.insert("ip".into(), e.ip.clone().into());
+                    m.insert("category".into(), e.category.clone().into());
+                    m.insert("connected_at".into(), e.connected_at_display().into());
+                    serde_yaml::Value::Mapping(m)
+                })
+                .collect();
+            println!("{}", serde_yaml::to_string(&data)?);
         }
     }
     Ok(())

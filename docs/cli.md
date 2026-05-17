@@ -77,6 +77,31 @@ See [`docs/sync.md`](sync.md) for the full story.
 | `hoppr sync push`        | Copy local config to tracked path, commit and push.     |
 | `hoppr sync status`      | Print repo URL, branch, local clone path and dirtiness. |
 
+### `hoppr history`
+
+Show the connection history (last 50 connections, most recent first).
+
+```bash
+hoppr history
+hoppr history --limit 10
+hoppr history --format json
+```
+
+| flag           | values                              | default  |
+| -------------- | ----------------------------------- | -------- |
+| `-n, --limit`  | integer                             | `20`     |
+| `-o, --format` | `table` · `json` · `yaml` · `plain` | `table`  |
+
+History is stored locally at:
+
+| OS      | Path                                                                |
+| ------- | ------------------------------------------------------------------- |
+| Linux   | `$XDG_DATA_HOME/hoppr/history.yaml`                                 |
+| macOS   | `~/Library/Application Support/dev.hoppr.hoppr/history.yaml`       |
+| Windows | `%APPDATA%\hoppr\hoppr\data\history.yaml`                           |
+
+History is never synced to the central git repo — it is per-machine.
+
 ### `hoppr completions <shell>`
 
 Emit a shell completion script.

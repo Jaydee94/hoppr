@@ -38,7 +38,10 @@ $ hoppr sync push  # commit + push your local edits upstream
 - **In-TUI settings** — add hosts, edit categories, change defaults, save to YAML. No shelling out to an editor.
 - **Team inventory in git** — point at a repo URL; hoppr auto-clones, fast-forward pulls the shared categories & hosts on every launch, pushes the inventory subset when you want. Your local `defaults` and `sync` settings stay on your machine.
 - **Pluggable connect command** — defaults to `ssh`, supports `mosh`, `telnet`, `kitty +kitten ssh`, raw shell, or any custom template with `{user}` `{host}` `{port}` placeholders.
-- **CLI parity** — every TUI action is also a subcommand (`connect`, `list`, `sync`, `config`).
+- **Favorites & history** — `f` stars a host into a virtual `★ Starred` category. The last 10 connections appear under `🕒 Recent`. Both persist across sessions, never synced to the central repo.
+- **Global search** — `Ctrl+A` while searching switches to cross-category fuzzy search; results show the originating category name.
+- **New-window launch** — `Shift+Enter` opens the connection in a fresh terminal window. hoppr auto-detects Windows Terminal, iTerm2, GNOME Terminal, Konsole, or xterm; override via `defaults.terminal_command`.
+- **CLI parity** — every TUI action is also a subcommand (`connect`, `list`, `sync`, `config`, `history`).
 - **Cross-platform** — Linux, macOS, Windows. Single static binary.
 
 ## Install

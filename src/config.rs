@@ -37,6 +37,10 @@ pub struct Defaults {
     pub port: u16,
     /// Default username when a host omits `user` and `$USER` is empty.
     pub user: Option<String>,
+    /// Terminal emulator used by "open in new window" (Shift+Enter).
+    /// When unset, hoppr auto-detects from the environment.
+    /// Examples: `"wt"`, `"gnome-terminal"`, `"xterm"`, `"alacritty -e"`.
+    pub terminal_command: Option<String>,
 }
 
 impl Default for Defaults {
@@ -45,6 +49,7 @@ impl Default for Defaults {
             command: ConnectCommand::default(),
             port: 22,
             user: None,
+            terminal_command: None,
         }
     }
 }
@@ -376,6 +381,7 @@ categories:
                 command: ConnectCommand::Program("mosh".into()),
                 port: 2222,
                 user: Some("me".into()),
+                terminal_command: None,
             },
             sync: Some(SyncConfig {
                 repo: Some("git@example.com:team/cfg.git".into()),
