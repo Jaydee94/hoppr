@@ -24,7 +24,7 @@ ratatui = "0.29"
 serde = { version = "1", features = ["derive"] }
 serde_yaml = "0.9"
 shellexpand = "3"
-thiserror = "1"
+thiserror = "2"
 time = { version = "0.3", features = ["formatting", "macros", "local-offset"] }
 
 [dev-dependencies]
