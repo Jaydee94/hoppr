@@ -27,11 +27,11 @@ jobs:
       version: ${{ steps.next.outputs.version }}
       will_release: ${{ steps.next.outputs.will_release }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           fetch-depth: 0
           token: ${{ secrets.GITHUB_TOKEN }}
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v6
         with:
           node-version: 20
           cache: npm
@@ -76,19 +76,21 @@ jobs:
             asset: hoppr-linux-aarch64.tar.gz
             cross: true
           - target: x86_64-apple-darwin
-            runner: macos-13
+            runner: macos-14
             asset: hoppr-macos-x86_64.tar.gz
             cross: false
+            macos_target: "10.14"
           - target: aarch64-apple-darwin
             runner: macos-14
             asset: hoppr-macos-aarch64.tar.gz
             cross: false
+            macos_target: "11.0"
           - target: x86_64-pc-windows-msvc
             runner: windows-latest
             asset: hoppr-windows-x86_64.zip
             cross: false
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           fetch-depth: 0
       - uses: dtolnay/rust-toolchain@stable
@@ -104,12 +106,21 @@ jobs:
           if [ -n "$VERSION" ]; then
             sed -i.bak -E "s/^version = \".*\"/version = \"$VERSION\"/" Cargo.toml
             rm Cargo.toml.bak
+            # Keep Cargo.lock consistent so --locked succeeds in the build step.
+            # cargo update -p hoppr updates only the root-package version entry;
+            # no dependency versions are changed.
+            cargo update -p hoppr
           fi
+      - name: install NASM (Windows)
+        if: runner.os == 'Windows'
+        uses: ilammy/setup-nasm@v1
       - name: install cross
         if: matrix.cross
         run: cargo install cross --locked
       - name: build
         shell: bash
+        env:
+          MACOSX_DEPLOYMENT_TARGET: ${{ matrix.macos_target }}
         run: |
           if [ "${{ matrix.cross }}" = "true" ]; then
             cross build --release --target ${{ matrix.target }} --locked
@@ -133,7 +144,7 @@ jobs:
           else
             tar -czf "dist/${{ matrix.asset }}" "$STAGE"
           fi
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: ${{ matrix.asset }}
           path: dist/${{ matrix.asset }}
@@ -147,18 +158,18 @@ jobs:
     if: needs.plan.outputs.will_release == 'true' && github.event.inputs.dry_run != 'true'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           fetch-depth: 0
           token: ${{ secrets.GITHUB_TOKEN }}
           persist-credentials: true
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v6
         with:
           node-version: 20
           cache: npm
       - run: npm ci
       - name: pull binaries
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           path: dist
           merge-multiple: true
@@ -184,10 +195,10 @@ jobs:
     if: github.event.inputs.dry_run == 'true'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           fetch-depth: 0
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v6
         with:
           node-version: 20
           cache: npm
