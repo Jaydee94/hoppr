@@ -294,7 +294,12 @@ fn handle_editor_event(app: &mut App, code: KeyCode, ctrl: bool) -> Result<bool>
 
     match editor.view {
         EditorView::Menu => match code {
-            KeyCode::Esc => app.exit_edit_mode(),
+            KeyCode::Esc => {
+                if app.editor.as_ref().map(|e| e.dirty).unwrap_or(false) {
+                    save_config(app)?;
+                }
+                app.exit_edit_mode();
+            }
             KeyCode::Up | KeyCode::Char('k') => {
                 editor.menu_index = (editor.menu_index + MENU_ITEMS.len() - 1) % MENU_ITEMS.len();
             }
