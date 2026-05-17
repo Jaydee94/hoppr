@@ -1,7 +1,8 @@
 /**
  * Commit message rules — see https://www.conventionalcommits.org/
  *
- * Allowed types feed into semantic-release (see .releaserc.json).
+ * Enforced on PRs by the `commitlint` job in .github/workflows/ci.yml.
+ * The release workflow auto-generates release notes from these commits.
  */
 module.exports = {
   extends: ['@commitlint/config-conventional'],

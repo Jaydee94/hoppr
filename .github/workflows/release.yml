@@ -3,68 +3,94 @@ name: release
 on:
   workflow_dispatch:
     inputs:
+      bump:
+        description: "Version bump (ignored if 'version' is provided)"
+        type: choice
+        options: [patch, minor, major]
+        default: patch
+      version:
+        description: "Explicit version, e.g. 1.2.3 (overrides 'bump')"
+        type: string
+        default: ""
       dry_run:
-        description: "Run semantic-release in dry-run mode (no tag, no publish)"
+        description: "Print the plan only — do not build, tag, or publish"
         type: boolean
         default: false
 
 permissions:
   contents: write
-  issues: write
-  pull-requests: write
 
 concurrency:
   group: release
   cancel-in-progress: false
 
 jobs:
-  # ── Compute the next version. We pin it before building any binaries so all
-  #    artifacts carry the same version string. ────────────────────────────────
+  # ── Decide which version we're about to ship. Single source of truth for
+  #    every downstream job. ────────────────────────────────────────────────
   plan:
     name: plan release
     runs-on: ubuntu-latest
     outputs:
       version: ${{ steps.next.outputs.version }}
-      will_release: ${{ steps.next.outputs.will_release }}
+      tag: ${{ steps.next.outputs.tag }}
+      previous_tag: ${{ steps.next.outputs.previous_tag }}
     steps:
+      - name: guard against non-main branches
+        if: github.ref != 'refs/heads/main'
+        run: |
+          echo "::error ::Release must run against main, got ${{ github.ref }}."
+          exit 1
       - uses: actions/checkout@v6
         with:
           fetch-depth: 0
-          token: ${{ secrets.GITHUB_TOKEN }}
-          persist-credentials: true
-      - uses: actions/setup-node@v6
-        with:
-          node-version: 20
-          cache: npm
-      - run: npm ci
       - id: next
         name: compute next version
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: bash
         run: |
           set -euo pipefail
-          # semantic-release --dry-run emits "The next release version is X.Y.Z"
-          DRY_OUTPUT="$(npx semantic-release --dry-run --no-ci 2>&1 || true)"
-          echo "$DRY_OUTPUT"
-          # grep exits 1 when there is no match; || true keeps pipefail from
-          # killing the script so the empty-VERSION branch below can run.
-          VERSION="$(echo "$DRY_OUTPUT" | grep -oE 'next release version is [0-9]+\.[0-9]+\.[0-9]+' | tail -n1 | awk '{print $5}' || true)"
-          if [ -z "$VERSION" ]; then
-            echo "will_release=false" >> "$GITHUB_OUTPUT"
-            echo "version=" >> "$GITHUB_OUTPUT"
-            echo "::notice ::No release needed — no qualifying commits since last tag."
+          PREVIOUS_TAG="$(git tag --list 'v*' --sort=-v:refname | head -n1 || true)"
+          echo "previous_tag=$PREVIOUS_TAG" >> "$GITHUB_OUTPUT"
+
+          INPUT_VERSION="${{ inputs.version }}"
+          INPUT_VERSION="${INPUT_VERSION#v}"
+
+          if [ -n "$INPUT_VERSION" ]; then
+            if ! [[ "$INPUT_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+              echo "::error ::Explicit version '$INPUT_VERSION' is not semver MAJOR.MINOR.PATCH."
+              exit 1
+            fi
+            VERSION="$INPUT_VERSION"
           else
-            echo "will_release=true" >> "$GITHUB_OUTPUT"
-            echo "version=$VERSION" >> "$GITHUB_OUTPUT"
-            echo "::notice ::Next release will be v$VERSION."
+            if [ -z "$PREVIOUS_TAG" ]; then
+              BASE="$(grep -E '^version[[:space:]]*=' Cargo.toml | head -n1 | awk -F\" '{print $2}')"
+            else
+              BASE="${PREVIOUS_TAG#v}"
+            fi
+            IFS='.' read -r MAJ MIN PAT <<< "$BASE"
+            case "${{ inputs.bump }}" in
+              major) MAJ=$((MAJ + 1)); MIN=0; PAT=0 ;;
+              minor) MIN=$((MIN + 1)); PAT=0 ;;
+              patch) PAT=$((PAT + 1)) ;;
+            esac
+            VERSION="${MAJ}.${MIN}.${PAT}"
           fi
 
-  # ── Cross-platform build matrix. We over-write Cargo.toml's version so the
-  #    binary's `--version` matches the imminent tag. ─────────────────────────
+          if git rev-parse -q --verify "refs/tags/v${VERSION}" >/dev/null; then
+            echo "::error ::Tag v${VERSION} already exists. Pass a different 'version' or bump."
+            exit 1
+          fi
+
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "tag=v$VERSION" >> "$GITHUB_OUTPUT"
+          echo "::notice ::Planning release v${VERSION} (previous: ${PREVIOUS_TAG:-none}, dry_run: ${{ github.event.inputs.dry_run }})."
+
+  # ── Cross-platform build matrix. Pins Cargo.toml to the planned version
+  #    locally so binaries report the right --version even before the bump
+  #    commit lands on main. ────────────────────────────────────────────────
   build:
     name: build ${{ matrix.target }}
     needs: plan
-    if: needs.plan.outputs.will_release == 'true' && github.event.inputs.dry_run != 'true'
+    if: ${{ github.event.inputs.dry_run != 'true' }}
     runs-on: ${{ matrix.runner }}
     strategy:
       fail-fast: false
@@ -105,15 +131,12 @@ jobs:
       - name: pin version
         shell: bash
         run: |
+          set -euo pipefail
           VERSION="${{ needs.plan.outputs.version }}"
-          if [ -n "$VERSION" ]; then
-            sed -i.bak -E "s/^version = \".*\"/version = \"$VERSION\"/" Cargo.toml
-            rm Cargo.toml.bak
-            # Keep Cargo.lock consistent so --locked succeeds in the build step.
-            # cargo update -p hoppr updates only the root-package version entry;
-            # no dependency versions are changed.
-            cargo update -p hoppr
-          fi
+          sed -i.bak -E "s/^version = \".*\"/version = \"$VERSION\"/" Cargo.toml
+          rm Cargo.toml.bak
+          # Keep Cargo.lock consistent so --locked succeeds in the build step.
+          cargo update -p hoppr
       - name: install NASM (Windows)
         if: runner.os == 'Windows'
         uses: ilammy/setup-nasm@v1
@@ -154,11 +177,12 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
-  # ── Run semantic-release for real, attaching every binary as a release asset.
-  release:
-    name: semantic-release
+  # ── Tag main, push the version bump, create the GitHub Release, attach
+  #    every binary + checksums. Always runs after a successful build. ─────
+  publish:
+    name: publish release
     needs: [plan, build]
-    if: needs.plan.outputs.will_release == 'true' && github.event.inputs.dry_run != 'true'
+    if: ${{ github.event.inputs.dry_run != 'true' }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
@@ -166,50 +190,91 @@ jobs:
           fetch-depth: 0
           token: ${{ secrets.GITHUB_TOKEN }}
           persist-credentials: true
-      - uses: actions/setup-node@v6
-        with:
-          node-version: 20
-          cache: npm
-      - run: npm ci
-      - name: pull binaries
-        uses: actions/download-artifact@v8
+      - uses: actions/download-artifact@v8
         with:
           path: dist
           merge-multiple: true
       - name: list binaries
         run: ls -la dist
       - name: checksums
+        shell: bash
         run: |
+          set -euo pipefail
           cd dist
-          sha256sum * > checksums.txt
+          sha256sum hoppr-* > checksums.txt
           cat checksums.txt
-      - name: release
+      - uses: dtolnay/rust-toolchain@stable
+      - name: bump Cargo.toml + Cargo.lock
+        shell: bash
+        run: |
+          set -euo pipefail
+          VERSION="${{ needs.plan.outputs.version }}"
+          sed -i.bak -E "s/^version = \".*\"/version = \"$VERSION\"/" Cargo.toml
+          rm Cargo.toml.bak
+          cargo update -p hoppr
+      - name: prepend CHANGELOG
+        shell: bash
+        run: |
+          set -euo pipefail
+          VERSION="${{ needs.plan.outputs.version }}"
+          PREV="${{ needs.plan.outputs.previous_tag }}"
+          DATE="$(date -u +%Y-%m-%d)"
+          {
+            echo "## v${VERSION} — ${DATE}"
+            echo
+            if [ -n "$PREV" ]; then
+              git log --pretty=format:'- %s (%h)' "${PREV}..HEAD"
+            else
+              git log --pretty=format:'- %s (%h)'
+            fi
+            echo
+            echo
+            if [ -f CHANGELOG.md ]; then cat CHANGELOG.md; fi
+          } > CHANGELOG.md.new
+          mv CHANGELOG.md.new CHANGELOG.md
+      - name: commit, tag, push
+        shell: bash
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GIT_AUTHOR_NAME: github-actions[bot]
           GIT_AUTHOR_EMAIL: 41898282+github-actions[bot]@users.noreply.github.com
           GIT_COMMITTER_NAME: github-actions[bot]
           GIT_COMMITTER_EMAIL: 41898282+github-actions[bot]@users.noreply.github.com
-        run: npx semantic-release
+        run: |
+          set -euo pipefail
+          VERSION="${{ needs.plan.outputs.version }}"
+          git add Cargo.toml Cargo.lock CHANGELOG.md
+          git commit -m "chore(release): v${VERSION} [skip ci]"
+          git tag -a "v${VERSION}" -m "release v${VERSION}"
+          git push origin HEAD:main
+          git push origin "v${VERSION}"
+      - name: create GitHub Release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          VERSION="${{ needs.plan.outputs.version }}"
+          PREV="${{ needs.plan.outputs.previous_tag }}"
+          ARGS=(--title "v${VERSION}" --generate-notes)
+          if [ -n "$PREV" ]; then ARGS+=(--notes-start-tag "$PREV"); fi
+          gh release create "v${VERSION}" "${ARGS[@]}" \
+            dist/hoppr-linux-x86_64.tar.gz \
+            dist/hoppr-linux-aarch64.tar.gz \
+            dist/hoppr-macos-x86_64.tar.gz \
+            dist/hoppr-macos-aarch64.tar.gz \
+            dist/hoppr-windows-x86_64.zip \
+            dist/checksums.txt
+          echo "::notice ::Released v${VERSION}: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/releases/tag/v${VERSION}"
 
+  # ── Dry-run: print the plan and exit. No builds, no tags, no publish.
   dry-run:
     name: dry-run summary
     needs: plan
-    if: github.event.inputs.dry_run == 'true'
+    if: ${{ github.event.inputs.dry_run == 'true' }}
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
-        with:
-          fetch-depth: 0
-          token: ${{ secrets.GITHUB_TOKEN }}
-          persist-credentials: true
-      - uses: actions/setup-node@v6
-        with:
-          node-version: 20
-          cache: npm
-      - run: npm ci
-      - env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: summary
         run: |
-          echo "Dry run only — no tag, no GitHub Release."
-          npx semantic-release --dry-run
+          echo "Dry run only — no build, no tag, no GitHub Release."
+          echo "Next version:  ${{ needs.plan.outputs.tag }}"
+          echo "Previous tag:  ${{ needs.plan.outputs.previous_tag }}"

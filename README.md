@@ -94,7 +94,7 @@ The full reference lives in [`docs/`](./docs):
 
 ## Contributing
 
-Contributions welcome — see [`CONTRIBUTING.md`](CONTRIBUTING.md). All commits must follow [Conventional Commits](https://www.conventionalcommits.org/) so semantic-release can ship them automatically.
+Contributions welcome — see [`CONTRIBUTING.md`](CONTRIBUTING.md). All commits must follow [Conventional Commits](https://www.conventionalcommits.org/); the release workflow turns the log between tags into the release notes.
 
 ## License
 
