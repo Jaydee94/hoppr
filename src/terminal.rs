@@ -57,13 +57,17 @@ impl TerminalLauncher {
         match backend {
             Backend::WindowsTerminal => {
                 if is_wsl() {
-                    Command::new("wt.exe")
-                        .arg("new-tab")
-                        .arg("--")
-                        .arg("wsl.exe")
-                        .arg("--")
-                        .args(argv)
-                        .spawn()?;
+                    // WSL execution aliases (wt.exe) don't work directly inside a WSL
+                    // distribution — use cmd.exe as a trampoline. -w 0 targets the
+                    // most-recently-used WT window so a new tab opens there, not a new window.
+                    let mut cmd = Command::new("cmd.exe");
+                    cmd.args(["/c", "wt.exe", "-w", "0", "nt"]);
+                    if let Ok(distro) = env::var("WSL_DISTRO_NAME") {
+                        cmd.args(["-p", distro.as_str()]);
+                    }
+                    cmd.args(["wsl.exe", "--"]);
+                    cmd.args(argv);
+                    cmd.spawn()?;
                 } else {
                     Command::new("wt")
                         .arg("new-tab")
