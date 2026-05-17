@@ -314,14 +314,42 @@ fn draw_hints(frame: &mut Frame<'_>, app: &App, theme: &Theme, area: Rect) {
             h.push(("q", "Quit"));
             h
         }
-        Mode::Edit => vec![
-            ("Esc", "Back"),
-            ("↑↓", "Move"),
-            ("↩", "Open"),
-            ("a", "Add"),
-            ("d", "Delete"),
-            ("s", "Save"),
-        ],
+        Mode::Edit => match app.editor.as_ref().map(|e| e.view) {
+            Some(EditorView::Menu) => vec![
+                ("↑↓", "Move"),
+                ("↩", "Select"),
+                ("Esc", "Exit"),
+            ],
+            Some(EditorView::Categories) => vec![
+                ("↑↓", "Move"),
+                ("↩", "Edit"),
+                ("a", "Add"),
+                ("d", "Delete"),
+                ("s", "Save"),
+                ("Esc", "Back"),
+            ],
+            Some(EditorView::Hosts) => vec![
+                ("↑↓", "Move"),
+                ("Tab", "Switch cat"),
+                ("↩", "Edit"),
+                ("a", "Add"),
+                ("d", "Delete"),
+                ("s", "Save"),
+                ("Esc", "Back"),
+            ],
+            Some(EditorView::CategoryForm) | Some(EditorView::HostForm) => vec![
+                ("↑↓", "Move"),
+                ("↩", "Confirm"),
+                ("Esc", "Cancel"),
+            ],
+            Some(EditorView::Defaults) | Some(EditorView::Sync) => vec![
+                ("↑↓", "Move"),
+                ("↩", "Apply"),
+                ("⌃s", "Save"),
+                ("Esc", "Back"),
+            ],
+            None => vec![("Esc", "Back")],
+        },
     };
     let mut spans = Vec::with_capacity(hints.len() * 4);
     for (i, (key, label)) in hints.iter().enumerate() {

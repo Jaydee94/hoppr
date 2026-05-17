@@ -419,7 +419,7 @@ fn handle_editor_event(app: &mut App, code: KeyCode, ctrl: bool) -> Result<bool>
             }
             KeyCode::Char('s') if ctrl => save_config(app)?,
             KeyCode::Enter => match editor.apply_defaults(&mut app.config) {
-                Ok(()) => editor.flash("Defaults applied"),
+                Ok(()) => editor.flash("Defaults applied · Ctrl+s to save"),
                 Err(err) => editor.flash(err),
             },
             KeyCode::Char(c) => editor.defaults_inputs[editor.defaults_field].push(c),
@@ -438,7 +438,7 @@ fn handle_editor_event(app: &mut App, code: KeyCode, ctrl: bool) -> Result<bool>
             }
             KeyCode::Char('s') if ctrl => save_config(app)?,
             KeyCode::Enter => match editor.apply_sync(&mut app.config) {
-                Ok(()) => editor.flash("Sync settings applied"),
+                Ok(()) => editor.flash("Sync applied · Ctrl+s to save"),
                 Err(err) => editor.flash(err),
             },
             KeyCode::Char(c) => editor.sync_inputs[editor.sync_field].push(c),
@@ -495,10 +495,15 @@ fn handle_category_form(
                     *slot = cat;
                 }
             }
+            let created = form.mode_create;
             editor.dirty = true;
             editor.category_form = None;
             editor.view = EditorView::Categories;
-            Some("Category saved".into())
+            Some(if created {
+                "Category added · s to save".into()
+            } else {
+                "Category updated · s to save".into()
+            })
         }
         KeyCode::Char(c) => {
             form.push_char(c);
@@ -552,10 +557,15 @@ fn handle_host_form(
                     *slot = host;
                 }
             }
+            let created = form.mode_create;
             editor.dirty = true;
             editor.host_form = None;
             editor.view = EditorView::Hosts;
-            Some("Host saved".into())
+            Some(if created {
+                "Host added · s to save".into()
+            } else {
+                "Host updated · s to save".into()
+            })
         }
         KeyCode::Char(c) => {
             form.push_char(c);
