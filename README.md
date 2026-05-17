@@ -42,15 +42,21 @@ hoppr replaces all three: one YAML file (optionally git-synced for the team), on
 
 ## Install
 
-Pre-built binaries for Linux (x86_64, aarch64), macOS (Intel, Apple Silicon) and Windows are attached to every [release](https://github.com/Jaydee94/hoppr/releases/latest).
+### Linux / macOS
 
 ```bash
-# Linux x86_64
-curl -L https://github.com/Jaydee94/hoppr/releases/latest/download/hoppr-linux-x86_64.tar.gz \
-  | tar -xz -C ~/.local/bin
+curl -fsSL https://raw.githubusercontent.com/Jaydee94/hoppr/main/install.sh | bash
 ```
 
-Or from source:
+### Windows (PowerShell)
+
+```powershell
+irm https://raw.githubusercontent.com/Jaydee94/hoppr/main/install.ps1 | iex
+```
+
+Re-running either command updates hoppr to the latest release. The binary is installed to `~/.local/bin` (Unix) or `%LOCALAPPDATA%\hoppr\bin` (Windows); both locations are added to your PATH automatically if not already present. Inspect the scripts before running: [`install.sh`](install.sh) · [`install.ps1`](install.ps1).
+
+Or build from source:
 
 ```bash
 cargo install --git https://github.com/Jaydee94/hoppr.git
