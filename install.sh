@@ -4,6 +4,7 @@ set -euo pipefail
 REPO="Jaydee94/hoppr"
 INSTALL_DIR="${HOPPR_INSTALL_DIR:-$HOME/.local/bin}"
 BINARY_NAME="hoppr"
+tmp_dir=""
 
 detect_platform() {
     local os arch
@@ -85,7 +86,6 @@ main() {
 
     local asset_name="hoppr-${platform}.tar.gz"
     local download_url="https://github.com/${REPO}/releases/download/${latest_tag}/${asset_name}"
-    local tmp_dir
     tmp_dir=$(mktemp -d)
     trap 'rm -rf "$tmp_dir"' EXIT
 
