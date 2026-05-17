@@ -55,7 +55,7 @@ categories:
 | `command`          | string \| obj  | `ssh`   | Default connect command for hosts that don't set one.              |
 | `port`             | `u16`          | `22`    | Default port substituted into `{port}` and `ssh -p`.               |
 | `user`             | string         | none    | Used when a host has no `user` field and `$USER` is empty.         |
-| `terminal_command` | string         | auto    | Terminal emulator used by `Shift+Enter` (open in new window). When unset, hoppr auto-detects from the environment (Windows Terminal, iTerm2, GNOME Terminal, Konsole, xterm). Examples: `"wt"`, `"gnome-terminal"`, `"alacritty -e"`. |
+| `terminal_command` | string         | auto    | Terminal emulator used by `t` (open in new tab). When unset, hoppr auto-detects from the environment (Windows Terminal, iTerm2, GNOME Terminal, Konsole, xterm). Examples: `"wt"`, `"gnome-terminal"`, `"alacritty -e"`. |
 
 ### Alternative connect commands
 

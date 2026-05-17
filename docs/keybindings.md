@@ -12,7 +12,7 @@
 | `↑` / `k`            | Previous item                                               |
 | `↓` / `j`            | Next item                                                   |
 | `Enter`              | When in Hosts: connect. When in Search: confirm and return. |
-| `Shift+Enter`        | Open connection in a new terminal window (if detected).     |
+| `t`                  | Open connection in a new terminal tab (if detected).        |
 | `f`                  | Toggle star / favorite on the selected host.                |
 | `Ctrl+A`             | Toggle global search (all categories vs. current only).     |
 | `e`                  | Open the in-TUI settings menu                               |
