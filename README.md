@@ -14,10 +14,10 @@
 </p>
 
 <p align="center">
-  <img src="assets/demo.svg" alt="hoppr TUI" width="900">
+  <img src="assets/demo.svg" alt="hoppr four-step walk-through: browse, search, settings, connect" width="960">
 </p>
 
-<sub>Animated demo: install <a href="https://github.com/charmbracelet/vhs">VHS</a> and run <code>vhs assets/demo.tape</code> to regenerate <code>assets/demo.gif</code>.</sub>
+<p align="center"><sub>Four keystrokes, four panels: <code>Tab</code> to focus hosts → <code>/</code> to fuzzy-search → <code>e</code> for the in-TUI editor → <code>↩</code> to hand off to ssh. Animated GIF: install <a href="https://github.com/charmbracelet/vhs">VHS</a> and run <code>vhs assets/demo.tape</code> to regenerate <code>assets/demo.gif</code>.</sub></p>
 
 ---
 
