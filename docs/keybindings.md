@@ -54,7 +54,19 @@ Open with `e`. Esc returns to the previous screen.
 - **Manage categories** — list, add (`a`), rename (`r` / `Enter`), delete (`d`).
 - **Manage hosts** — `Tab` cycles between categories. Same `a/r/d` semantics.
 - **Connection defaults** — edit `defaults.command` (program), default port, default user.
-- **Central repo sync** — edit the `sync.*` block. `Enter` applies the form; `Ctrl+S` writes to disk and (if `auto_push: true`) pushes upstream.
+- **Central repo sync** — edit the `sync.*` block. `Enter` applies the form (and clones the repo on first setup); `Space` toggles the boolean field under the cursor; `Ctrl+T` runs a connection test against the entered URL; `Ctrl+P` triggers an immediate sync (clone or fast-forward pull); `Ctrl+S` writes to disk and (if `auto_push: true`) pushes upstream.
+
+### Sync editor keys
+
+| key       | action                                                       |
+| --------- | ------------------------------------------------------------ |
+| `↑↓ Tab`  | Move between sync fields                                     |
+| `Space`   | Toggle `auto-pull` / `auto-push` on the focused boolean row  |
+| `Enter`   | Apply the form (auto-clones the repo if missing locally)     |
+| `Ctrl+T`  | Test the connection to the repo URL (no disk writes)         |
+| `Ctrl+P`  | Sync now — clone or fast-forward pull                        |
+| `Ctrl+S`  | Save the local config to disk                                |
+| `Esc`     | Back to the settings menu                                    |
 
 ## Mnemonics
 

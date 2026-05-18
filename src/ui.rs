@@ -22,7 +22,7 @@ use ratatui::{
 use crate::{
     app::{App, Focus, Mode, VirtualCategoryKind},
     connect,
-    editor::{CategoryForm, EditorState, EditorView, HostForm, MENU_ITEMS},
+    editor::{sync_field_is_bool, CategoryForm, EditorState, EditorView, HostForm, MENU_ITEMS},
     theme::{Theme, ACTIVE_GLYPH, INACTIVE_GLYPH},
 };
 
@@ -336,9 +336,18 @@ fn draw_hints(frame: &mut Frame<'_>, app: &App, theme: &Theme, area: Rect) {
             Some(EditorView::CategoryForm) | Some(EditorView::HostForm) => {
                 vec![("↑↓", "Move"), ("↩", "Confirm"), ("Esc", "Cancel")]
             }
-            Some(EditorView::Defaults) | Some(EditorView::Sync) => vec![
+            Some(EditorView::Defaults) => vec![
                 ("↑↓", "Move"),
                 ("↩", "Apply"),
+                ("⌃s", "Save"),
+                ("Esc", "Back"),
+            ],
+            Some(EditorView::Sync) => vec![
+                ("↑↓", "Move"),
+                ("Space", "Toggle"),
+                ("↩", "Apply"),
+                ("⌃t", "Test"),
+                ("⌃p", "Sync"),
                 ("⌃s", "Save"),
                 ("Esc", "Back"),
             ],
@@ -735,36 +744,54 @@ fn draw_sync_editor(frame: &mut Frame<'_>, editor: &EditorState, theme: &Theme, 
         .split(area);
     for (i, label) in labels.iter().enumerate() {
         let active = editor.sync_field == i;
-        let para = Paragraph::new(Line::from(vec![
-            Span::styled(
-                format!(" {label:<14} "),
-                Style::default().fg(theme.text_dim),
-            ),
-            Span::styled(
+        let value_spans = if sync_field_is_bool(i) {
+            toggle_spans(&editor.sync_inputs[i], theme)
+        } else {
+            vec![Span::styled(
                 editor.sync_inputs[i].clone(),
                 Style::default().fg(theme.text),
-            ),
-            if active {
-                Span::styled("▌", Style::default().fg(theme.accent))
-            } else {
-                Span::raw("")
-            },
-        ]))
-        .block(
-            Block::default()
-                .borders(Borders::ALL)
-                .border_type(BorderType::Rounded)
-                .border_style(Style::default().fg(if active {
-                    theme.primary
-                } else {
-                    theme.border
-                }))
-                .style(Style::default().bg(theme.surface)),
-        )
-        .style(Style::default().bg(theme.surface))
-        .wrap(Wrap { trim: true });
+            )]
+        };
+        let mut spans = vec![Span::styled(
+            format!(" {label:<14} "),
+            Style::default().fg(theme.text_dim),
+        )];
+        spans.extend(value_spans);
+        if active && !sync_field_is_bool(i) {
+            spans.push(Span::styled("▌", Style::default().fg(theme.accent)));
+        }
+        let para = Paragraph::new(Line::from(spans))
+            .block(
+                Block::default()
+                    .borders(Borders::ALL)
+                    .border_type(BorderType::Rounded)
+                    .border_style(Style::default().fg(if active {
+                        theme.primary
+                    } else {
+                        theme.border
+                    }))
+                    .style(Style::default().bg(theme.surface)),
+            )
+            .style(Style::default().bg(theme.surface))
+            .wrap(Wrap { trim: true });
         frame.render_widget(para, chunks[i]);
     }
+}
+
+/// Render a boolean field as `[●] On` / `[ ] Off`, with a faded "unset"
+/// state for fields the user hasn't touched yet.
+fn toggle_spans(value: &str, theme: &Theme) -> Vec<Span<'static>> {
+    let (mark, label, color) = match value.trim().to_lowercase().as_str() {
+        "true" | "yes" | "y" | "1" | "on" => ("[●]", "On", theme.success),
+        "false" | "no" | "n" | "0" | "off" => ("[ ]", "Off", theme.text_dim),
+        _ => ("[ ]", "Off (default)", theme.text_muted),
+    };
+    vec![
+        Span::styled(mark, Style::default().fg(color)),
+        Span::raw(" "),
+        Span::styled(label.to_string(), Style::default().fg(theme.text)),
+        Span::styled("   space to toggle", Style::default().fg(theme.text_muted)),
+    ]
 }
 
 #[cfg(test)]

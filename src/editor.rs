@@ -193,6 +193,22 @@ pub struct EditorState {
     pub flash: Option<String>,
 }
 
+/// Layout of the sync editor — strings indexed by field position.
+pub const SYNC_REPO: usize = 0;
+#[allow(dead_code)]
+pub const SYNC_BRANCH: usize = 1;
+#[allow(dead_code)]
+pub const SYNC_PATH: usize = 2;
+#[allow(dead_code)]
+pub const SYNC_LOCAL: usize = 3;
+pub const SYNC_AUTO_PULL: usize = 4;
+pub const SYNC_AUTO_PUSH: usize = 5;
+pub const SYNC_FIELD_COUNT: usize = 6;
+
+pub fn sync_field_is_bool(field: usize) -> bool {
+    field == SYNC_AUTO_PULL || field == SYNC_AUTO_PUSH
+}
+
 impl EditorState {
     pub fn from_config(config: &Config) -> Self {
         let defaults_inputs = [
@@ -279,6 +295,21 @@ impl EditorState {
         self.dirty = true;
         Ok(())
     }
+
+    /// Flip the boolean field at `field` (indexed by `SYNC_AUTO_*`).
+    /// Empty values become `true`, `true` becomes `false`, `false` becomes
+    /// `true`. Returns the new textual representation.
+    pub fn toggle_sync_bool(&mut self, field: usize) -> &str {
+        if !sync_field_is_bool(field) {
+            return "";
+        }
+        let next = match parse_bool(&self.sync_inputs[field]).ok().flatten() {
+            Some(true) => "false",
+            Some(false) | None => "true",
+        };
+        self.sync_inputs[field] = next.into();
+        &self.sync_inputs[field]
+    }
 }
 
 fn empty_to_none(input: &str) -> Option<String> {
@@ -321,3 +352,28 @@ pub const MENU_ITEMS: &[(&str, EditorView)] = &[
 pub const FORM_MODE_CREATE: FormMode = FormMode::Create;
 #[allow(dead_code)]
 pub const FORM_MODE_UPDATE: FormMode = FormMode::Update;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::config::Config;
+
+    #[test]
+    fn toggle_sync_bool_cycles_through_states() {
+        let mut state = EditorState::from_config(&Config::default());
+        // Unset -> true
+        assert_eq!(state.toggle_sync_bool(SYNC_AUTO_PULL), "true");
+        // true -> false
+        assert_eq!(state.toggle_sync_bool(SYNC_AUTO_PULL), "false");
+        // false -> true
+        assert_eq!(state.toggle_sync_bool(SYNC_AUTO_PULL), "true");
+    }
+
+    #[test]
+    fn toggle_sync_bool_ignores_non_bool_fields() {
+        let mut state = EditorState::from_config(&Config::default());
+        state.sync_inputs[SYNC_REPO] = "git@example.com:x/y.git".into();
+        assert_eq!(state.toggle_sync_bool(SYNC_REPO), "");
+        assert_eq!(state.sync_inputs[SYNC_REPO], "git@example.com:x/y.git");
+    }
+}
