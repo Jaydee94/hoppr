@@ -1,6 +1,10 @@
 //! Top-level application state for the TUI.
 
-use std::{cmp::Reverse, path::PathBuf};
+use std::{
+    cmp::Reverse,
+    path::PathBuf,
+    time::{Duration, Instant},
+};
 
 use fuzzy_matcher::{skim::SkimMatcherV2, FuzzyMatcher};
 use ratatui::widgets::ListState;
@@ -25,6 +29,68 @@ pub enum Focus {
 pub enum Mode {
     Browse,
     Edit,
+}
+
+/// Severity tier of a transient status-bar message. Drives both the
+/// leading glyph and the color, plus the auto-fade TTL: friendly messages
+/// (info / success) fade fast, problems linger so the user has time to
+/// read them.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MessageKind {
+    Success,
+    Info,
+    Warn,
+    Error,
+}
+
+impl MessageKind {
+    pub fn glyph(self) -> &'static str {
+        match self {
+            Self::Success => "✓",
+            Self::Info => "·",
+            Self::Warn => "⚠",
+            Self::Error => "✕",
+        }
+    }
+
+    pub fn ttl(self) -> Duration {
+        match self {
+            Self::Success | Self::Info => Duration::from_secs(3),
+            Self::Warn => Duration::from_secs(6),
+            Self::Error => Duration::from_secs(10),
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct StatusMessage {
+    pub kind: MessageKind,
+    pub text: String,
+    pub set_at: Instant,
+}
+
+impl StatusMessage {
+    pub fn is_fresh(&self) -> bool {
+        self.set_at.elapsed() < self.kind.ttl()
+    }
+}
+
+/// Render a `Duration` as a short "x ago" string for the sync chip.
+/// Keeps the output narrow so the left status column doesn't push the
+/// middle slot around as time passes.
+pub fn relative_time(elapsed: Duration) -> String {
+    let secs = elapsed.as_secs();
+    if secs < 5 {
+        "just now".into()
+    } else if secs < 60 {
+        format!("{secs}s ago")
+    } else if secs < 3600 {
+        format!("{}m ago", secs / 60)
+    } else if secs < 86_400 {
+        format!("{}h ago", secs / 3600)
+    } else {
+        format!("{}d ago", secs / 86_400)
+    }
 }
 
 /// A host together with the name of its originating category.
@@ -60,7 +126,14 @@ pub struct App {
     pub categories_state: ListState,
     pub hosts_state: ListState,
     pub sync_status: SyncStatus,
-    pub status_message: Option<String>,
+    pub status_message: Option<StatusMessage>,
+    /// Wall-clock anchor for the last successful sync, used to render
+    /// the "synced 2m ago" chip on the left of the status bar.
+    pub last_sync_at: Option<Instant>,
+    /// Cached result of `sync::has_uncommitted_changes` — `Some(true)`
+    /// surfaces the "unpushed" chip. `None` means we haven't checked yet
+    /// (no sync configured, or the clone is missing).
+    pub sync_dirty: Option<bool>,
     pub editor: Option<EditorState>,
     pub history: HistoryStore,
     pub favorites: FavoritesStore,
@@ -94,6 +167,8 @@ impl App {
             hosts_state: ListState::default(),
             sync_status,
             status_message: None,
+            last_sync_at: None,
+            sync_dirty: None,
             editor: None,
             history,
             favorites,
@@ -437,7 +512,43 @@ impl App {
     }
 
     pub fn set_status<S: Into<String>>(&mut self, msg: S) {
-        self.status_message = Some(msg.into());
+        self.set_status_kind(MessageKind::Info, msg);
+    }
+
+    pub fn set_status_success<S: Into<String>>(&mut self, msg: S) {
+        self.set_status_kind(MessageKind::Success, msg);
+    }
+
+    #[allow(dead_code)]
+    pub fn set_status_warn<S: Into<String>>(&mut self, msg: S) {
+        self.set_status_kind(MessageKind::Warn, msg);
+    }
+
+    pub fn set_status_error<S: Into<String>>(&mut self, msg: S) {
+        self.set_status_kind(MessageKind::Error, msg);
+    }
+
+    pub fn set_status_kind<S: Into<String>>(&mut self, kind: MessageKind, msg: S) {
+        self.status_message = Some(StatusMessage {
+            kind,
+            text: msg.into(),
+            set_at: Instant::now(),
+        });
+    }
+
+    /// Returns the current message only while it's still inside its TTL.
+    /// Expired messages are reported as `None` so the renderer can fall
+    /// back to the default content (selected-host preview).
+    pub fn active_status(&self) -> Option<&StatusMessage> {
+        self.status_message.as_ref().filter(|m| m.is_fresh())
+    }
+
+    /// Stamp `last_sync_at` and remember whether the local clone has
+    /// uncommitted changes. Caller passes `None` for `dirty` when sync
+    /// is disabled or the clone is missing.
+    pub fn record_sync(&mut self, dirty: Option<bool>) {
+        self.last_sync_at = Some(Instant::now());
+        self.sync_dirty = dirty;
     }
 }
 
@@ -548,6 +659,38 @@ mod tests {
         app.search_all = true;
         app.search_query = "web".into();
         assert_eq!(app.filtered_hosts().len(), 2);
+    }
+
+    #[test]
+    fn relative_time_buckets_correctly() {
+        use super::relative_time;
+        use std::time::Duration;
+        assert_eq!(relative_time(Duration::from_secs(2)), "just now");
+        assert_eq!(relative_time(Duration::from_secs(12)), "12s ago");
+        assert_eq!(relative_time(Duration::from_secs(150)), "2m ago");
+        assert_eq!(relative_time(Duration::from_secs(4_000)), "1h ago");
+        assert_eq!(relative_time(Duration::from_secs(200_000)), "2d ago");
+    }
+
+    #[test]
+    fn status_message_expires_after_ttl() {
+        use super::{MessageKind, StatusMessage};
+        use std::time::{Duration, Instant};
+        // Construct a message stamped far in the past.
+        let past = Instant::now() - Duration::from_secs(60);
+        let stale = StatusMessage {
+            kind: MessageKind::Info,
+            text: "old".into(),
+            set_at: past,
+        };
+        assert!(!stale.is_fresh());
+
+        let fresh = StatusMessage {
+            kind: MessageKind::Error,
+            text: "new".into(),
+            set_at: Instant::now(),
+        };
+        assert!(fresh.is_fresh());
     }
 
     #[test]

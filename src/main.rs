@@ -133,6 +133,15 @@ fn run_tui(config: Config, config_path: PathBuf, status: SyncStatus) -> Result<(
         favorites,
         terminal_launcher,
     );
+    // Stamp the freshness chip if we actually contacted the remote, and
+    // probe the local clone so the "unpushed" indicator is accurate from
+    // the first frame.
+    if matches!(
+        app.sync_status,
+        SyncStatus::UpToDate | SyncStatus::Pulled | SyncStatus::PulledWithChanges
+    ) {
+        app.record_sync(probe_sync_dirty(&app.config));
+    }
 
     let mut terminal = setup_terminal()?;
     let run_result = event_loop(&mut terminal, &mut app);
@@ -140,6 +149,17 @@ fn run_tui(config: Config, config_path: PathBuf, status: SyncStatus) -> Result<(
     run_result?;
     restore_result?;
     Ok(())
+}
+
+/// Cheap (local-only) probe of the synced clone. Returns `None` when
+/// sync isn't configured or the clone is missing; otherwise the bool
+/// reflects `git status` — true means there are uncommitted changes.
+fn probe_sync_dirty(config: &Config) -> Option<bool> {
+    let ctx = SyncContext::from(config.sync.as_ref()?)?;
+    if !ctx.local_clone.exists() {
+        return None;
+    }
+    sync::has_uncommitted_changes(&ctx).ok()
 }
 
 fn setup_terminal() -> Result<Terminal<CrosstermBackend<Stdout>>> {
@@ -216,7 +236,7 @@ fn event_loop(terminal: &mut Terminal<CrosstermBackend<Stdout>>, app: &mut App) 
                         let starred = app.favorites.toggle(&cat_name, &host_name);
                         let _ = app.favorites.save();
                         if starred {
-                            app.set_status(format!("★  {host_name} starred"));
+                            app.set_status_success(format!("★  {host_name} starred"));
                         } else {
                             app.set_status(format!("{host_name} removed from favorites"));
                         }
@@ -344,10 +364,10 @@ fn ssh_spawn(app: &mut App) -> Result<()> {
         Ok(()) => {
             app.history.record(&host.name, &host.ip, &category_name);
             let _ = app.history.save();
-            app.set_status(format!("Opened {} in new window", host.name));
+            app.set_status_success(format!("Opened {} in new window", host.name));
         }
         Err(err) => {
-            app.set_status(format!("Terminal launch failed: {err:#}"));
+            app.set_status_error(format!("Terminal launch failed: {err:#}"));
         }
     }
     Ok(())
@@ -720,6 +740,7 @@ fn sync_pull_now(app: &mut App) {
                     app.config.apply_inventory(inv);
                 }
             }
+            app.record_sync(sync::has_uncommitted_changes(&ctx).ok());
             if let Some(editor) = app.editor.as_mut() {
                 editor.flash(format!("Sync · {}", status.label()));
             }
@@ -758,6 +779,7 @@ fn sync_clone_if_missing(app: &mut App) {
                     app.config.apply_inventory(inv);
                 }
             }
+            app.record_sync(sync::has_uncommitted_changes(&ctx).ok());
             if let Some(editor) = app.editor.as_mut() {
                 editor.flash(format!("Cloned · {}", status.label()));
             }
@@ -777,7 +799,7 @@ fn save_config(app: &mut App) -> Result<()> {
         editor.dirty = false;
         editor.flash("Saved");
     }
-    app.set_status(format!("Saved to {}", app.config_path.display()));
+    app.set_status_success(format!("Saved to {}", app.config_path.display()));
 
     if let Some(sync_cfg) = app.config.sync.as_ref() {
         if sync_cfg.auto_push.unwrap_or(false) {
@@ -787,10 +809,17 @@ fn save_config(app: &mut App) -> Result<()> {
                     .save_to_path(ctx.tracked_path())
                     .and_then(|()| sync::commit_and_push(&ctx, "chore: update hoppr inventory"));
                 match outcome {
-                    Ok(()) => app.set_status("Auto-pushed inventory upstream"),
-                    Err(err) => app.set_status(format!("Auto-push failed: {err:#}")),
+                    Ok(()) => {
+                        app.set_status_success("Auto-pushed inventory upstream");
+                        app.record_sync(Some(false));
+                    }
+                    Err(err) => app.set_status_error(format!("Auto-push failed: {err:#}")),
                 }
             }
+        } else {
+            // No auto-push — refresh the dirty flag so the chip reflects
+            // that the local clone now has uncommitted edits waiting.
+            app.sync_dirty = probe_sync_dirty(&app.config);
         }
     }
     Ok(())

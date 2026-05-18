@@ -39,6 +39,18 @@ All UI styling for `hoppr` flows through `src/theme.rs`. New colors, modifiers a
 - Active section glyph: `▍ ` (`theme::ACTIVE_GLYPH`).
 - Hints in the footer use `[key] label` pairs separated by `  ·  ` dots.
 
+## Status bar
+
+The 1-row status bar above the hint line has three slots:
+
+| slot                    | shows                                                                                  |
+| ----------------------- | -------------------------------------------------------------------------------------- |
+| left (32 chars)         | Sync chip: `●` colored by state + label. When the repo has been pulled at least once in the session the label becomes `synced 2m ago`, refreshed every 200 ms. A bold `· unpushed` suffix appears when `sync::has_uncommitted_changes` is true. |
+| middle (flex)           | Optional `filter: "q"` chip (or `global: "q"` with `Ctrl+A`), then either a transient status message colored by `MessageKind` (✓ success / · info / ⚠ warn / ✕ error) or, when no message is active, the resolved connection command of the selected host (`[name] ssh user@ip:22`). |
+| right (20 chars)        | `<filtered>/<total> hosts`.                                                            |
+
+`MessageKind` controls both color and TTL: `Success`/`Info` fade after 3 s, `Warn` after 6 s, `Error` after 10 s. Once the TTL expires the middle slot reverts to the selected-host preview. Always pick the right severity at the call site — use `App::set_status_success` / `set_status_warn` / `set_status_error` rather than plain `set_status` (which defaults to info).
+
 ## Brand assets
 
 | file                  | purpose                                            |
