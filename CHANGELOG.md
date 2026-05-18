@@ -1,3 +1,11 @@
+## v1.1.0 — 2026-05-18
+
+- Merge pull request #25 from Jaydee94/claude/improve-repo-sync-config-1KQKZ (5b8188f)
+- feat(ui): richer status bar with severity colors, sync freshness and host preview (bc3bcd7)
+- feat(connect): only ssh embeds the user@ prefix; mosh/autossh/telnet skip it (6e03b9a)
+- feat(connect): omit user prefix when neither host nor defaults set one (226e58b)
+- feat(tui): improve sync editor UX and add ssh connection spinner (e0b3941)
+
 ## v1.0.0 — 2026-05-17
 
 - docs: update keybinding references from Shift+Enter to t (89d4523)
