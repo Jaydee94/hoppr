@@ -1,3 +1,9 @@
+## v1.1.2 — 2026-05-18
+
+- Merge pull request #27 from Jaydee94/claude/improve-repo-sync-config-1KQKZ (e0c7b12)
+- fix(sync): make the [Test connection] button actually exercise SSH auth (e8095d5)
+- fix(sync): enable libssh2 in git2 so SSH repo URLs work (b58ceee)
+
 ## v1.1.1 — 2026-05-18
 
 - Merge pull request #26 from Jaydee94/claude/improve-repo-sync-config-1KQKZ (4ccc4eb)
