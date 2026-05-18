@@ -108,6 +108,35 @@ pub enum SyncStatus {
     Failed,
 }
 
+/// Build a fresh set of `RemoteCallbacks` wired to our credentials
+/// helper.
+///
+/// SSH is a two-round flow: libgit2 first asks for the *username*
+/// (separate from the credential), then for the actual key. We answer
+/// USERNAME requests once each operation, then defer the real auth
+/// step to `credentials_cb`. A second real-auth request means our
+/// credentials were rejected — we bail out instead of looping forever.
+fn make_auth_callbacks() -> RemoteCallbacks<'static> {
+    let mut callbacks = RemoteCallbacks::new();
+    let mut answered_username = false;
+    let mut answered_credential = false;
+    callbacks.credentials(move |url, user, allowed| {
+        if allowed.contains(git2::CredentialType::USERNAME) {
+            if answered_username {
+                return Err(git2::Error::from_str("username re-requested"));
+            }
+            answered_username = true;
+            return Cred::username(user.unwrap_or("git"));
+        }
+        if answered_credential {
+            return Err(git2::Error::from_str("credentials already attempted"));
+        }
+        answered_credential = true;
+        credentials_cb(url, user, allowed)
+    });
+    callbacks
+}
+
 impl SyncStatus {
     pub fn label(self) -> &'static str {
         match self {
@@ -129,17 +158,8 @@ impl SyncStatus {
 pub fn test_connection(repo_url: &str) -> Result<()> {
     let mut remote = git2::Remote::create_detached(repo_url)
         .with_context(|| format!("invalid repo URL: {}", redact_url(repo_url)))?;
-    let mut callbacks = RemoteCallbacks::new();
-    let mut attempts = 0u32;
-    callbacks.credentials(move |url, user, allowed| {
-        attempts += 1;
-        if attempts > 1 {
-            return Err(git2::Error::from_str("credentials already attempted"));
-        }
-        credentials_cb(url, user, allowed)
-    });
     remote
-        .connect_auth(git2::Direction::Fetch, Some(callbacks), None)
+        .connect_auth(git2::Direction::Fetch, Some(make_auth_callbacks()), None)
         .with_context(|| format!("failed to reach {}", redact_url(repo_url)))?;
     remote.disconnect().ok();
     Ok(())
@@ -176,17 +196,8 @@ pub fn ensure_repo(ctx: &SyncContext) -> Result<SyncStatus> {
                 format!("failed to create sync parent dir: {}", parent.display())
             })?;
         }
-        let mut callbacks = RemoteCallbacks::new();
-        let mut attempts = 0u32;
-        callbacks.credentials(move |url, user, allowed| {
-            attempts += 1;
-            if attempts > 1 {
-                return Err(git2::Error::from_str("credentials already attempted"));
-            }
-            credentials_cb(url, user, allowed)
-        });
         let mut fetch_opts = FetchOptions::new();
-        fetch_opts.remote_callbacks(callbacks);
+        fetch_opts.remote_callbacks(make_auth_callbacks());
 
         let mut builder = git2::build::RepoBuilder::new();
         builder.fetch_options(fetch_opts);
@@ -267,17 +278,8 @@ pub fn pull(ctx: &SyncContext) -> Result<SyncStatus> {
             .find_remote("origin")
             .context("missing origin remote")?;
 
-        let mut callbacks = RemoteCallbacks::new();
-        let mut attempts = 0u32;
-        callbacks.credentials(move |url, user, allowed| {
-            attempts += 1;
-            if attempts > 1 {
-                return Err(git2::Error::from_str("credentials already attempted"));
-            }
-            credentials_cb(url, user, allowed)
-        });
         let mut fetch_opts = FetchOptions::new();
-        fetch_opts.remote_callbacks(callbacks);
+        fetch_opts.remote_callbacks(make_auth_callbacks());
 
         remote
             .fetch(&[ctx.branch.as_str()], Some(&mut fetch_opts), None)
@@ -357,17 +359,8 @@ pub fn commit_and_push(ctx: &SyncContext, message: &str) -> Result<()> {
     let mut remote = repo
         .find_remote("origin")
         .context("missing origin remote")?;
-    let mut callbacks = RemoteCallbacks::new();
-    let mut attempts = 0u32;
-    callbacks.credentials(move |url, user, allowed| {
-        attempts += 1;
-        if attempts > 1 {
-            return Err(git2::Error::from_str("credentials already attempted"));
-        }
-        credentials_cb(url, user, allowed)
-    });
     let mut push_opts = PushOptions::new();
-    push_opts.remote_callbacks(callbacks);
+    push_opts.remote_callbacks(make_auth_callbacks());
 
     let refspec = format!("refs/heads/{0}:refs/heads/{0}", ctx.branch);
     remote
