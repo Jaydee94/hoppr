@@ -121,6 +121,30 @@ impl SyncStatus {
     }
 }
 
+/// Probe the configured remote without writing anything to disk.
+///
+/// Uses libgit2's `ls_remote` against an in-memory remote so the same
+/// credential callbacks are exercised that a real clone or pull would
+/// hit. Useful from the settings editor as a "test connection" button.
+pub fn test_connection(repo_url: &str) -> Result<()> {
+    let mut remote = git2::Remote::create_detached(repo_url)
+        .with_context(|| format!("invalid repo URL: {}", redact_url(repo_url)))?;
+    let mut callbacks = RemoteCallbacks::new();
+    let mut attempts = 0u32;
+    callbacks.credentials(move |url, user, allowed| {
+        attempts += 1;
+        if attempts > 1 {
+            return Err(git2::Error::from_str("credentials already attempted"));
+        }
+        credentials_cb(url, user, allowed)
+    });
+    remote
+        .connect_auth(git2::Direction::Fetch, Some(callbacks), None)
+        .with_context(|| format!("failed to reach {}", redact_url(repo_url)))?;
+    remote.disconnect().ok();
+    Ok(())
+}
+
 /// Clone the configured repo if missing, otherwise fast-forward pull.
 pub fn ensure_repo(ctx: &SyncContext) -> Result<SyncStatus> {
     if !ctx.local_clone.exists() {

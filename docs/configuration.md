@@ -54,7 +54,7 @@ categories:
 | ------------------ | -------------- | ------- | ------------------------------------------------------------------ |
 | `command`          | string \| obj  | `ssh`   | Default connect command for hosts that don't set one.              |
 | `port`             | `u16`          | `22`    | Default port substituted into `{port}` and `ssh -p`.               |
-| `user`             | string         | none    | Used when a host has no `user` field and `$USER` is empty.         |
+| `user`             | string         | none    | Fallback user for the `ssh` shorthand when a host has no `user` field. When unset (or when the connect program isn't `ssh`), hoppr omits the `user@` prefix entirely so `ssh_config` (`User` directive) or the program's own default can take over. |
 | `terminal_command` | string         | auto    | Terminal emulator used by `t` (open in new tab). When unset, hoppr auto-detects from the environment (Windows Terminal, iTerm2, GNOME Terminal, Konsole, xterm). Examples: `"wt"`, `"gnome-terminal"`, `"alacritty -e"`. |
 
 ### Alternative connect commands
@@ -65,16 +65,18 @@ The `command` field accepts two shapes:
 
 ```yaml
 defaults:
-  command: mosh        # → `mosh user@host`
+  command: mosh        # → `mosh host`
 ```
+
+Only `ssh` embeds the resolved `user@` prefix in the rendered command — every other program is assumed to read its own user from its own configuration (mosh from `--user`, autossh from `~/.ssh/config`, kitty/wezterm from their kittens, …). If you need a different user for a non-ssh program, set it through that program's config, or write a `Template` form (see below) that splices `{user}` where you want it.
 
 | program       | resolved invocation                              |
 | ------------- | ------------------------------------------------ |
-| `ssh`         | `ssh -p <port> <user>@<host>`                    |
-| `autossh`     | `autossh -p <port> <user>@<host>`                |
-| `mosh`        | `mosh [--ssh "ssh -p <port>"] <user>@<host>`     |
+| `ssh`         | `ssh -p <port> [<user>@]<host>`                  |
+| `autossh`     | `autossh -p <port> <host>`                       |
+| `mosh`        | `mosh [--ssh "ssh -p <port>"] <host>`            |
 | `telnet`      | `telnet <host> <port>`                           |
-| _(other)_     | `<program> <user>@<host>`                        |
+| _(other)_     | `<program> <host>`                               |
 
 **Template** — full control. Supports `{user}`, `{host}`, `{ip}`, `{port}`, `{name}` placeholders:
 
@@ -117,10 +119,24 @@ For one-off connections that don't fit a template — e.g. jumping through a bas
 | ---------- | ------- | -------- | -------------------------------------- |
 | `name`     | string  | ✓        | Display name and fuzzy-search target.  |
 | `ip`       | string  | ✓        | IP, hostname or any string SSH accepts.|
-| `user`     | string  |          | Falls back to `defaults.user` → `$USER` → `root`. |
+| `user`     | string  |          | Only consumed by the `ssh` shorthand and by templates that reference `{user}`. For `ssh`, falls back to `defaults.user`; when neither is set the `user@` prefix is dropped so `~/.ssh/config` decides. For `mosh`/`autossh`/`telnet`/custom programs the field is ignored — configure the user inside that program's own config or use a `Template` form. Set `user: ""` to override an inherited `defaults.user` and force "no user" for a single host. |
 | `port`     | `u16`   |          | Falls back to `defaults.port`.         |
 | `cmd`      | string  |          | Raw shell command. Wins over everything else. |
 | `command`  | string \| obj |    | Per-host structured override.          |
+
+### Letting external tools set the user
+
+Sometimes the user is already defined in `~/.ssh/config`:
+
+```ssh-config
+Host bastion.example.com
+    User deploy
+    IdentityFile ~/.ssh/deploy_ed25519
+```
+
+Leave `user` out of the hoppr config for those hosts and the rendered `ssh` command becomes `ssh -p 22 bastion.example.com`. SSH then picks up `User deploy` from the config.
+
+For `mosh`, `autossh`, `telnet`, and any other shorthand program, hoppr never writes a `user@` prefix at all — those programs are expected to discover the user from their own configuration (or to be invoked through a `Template` form when you need a specific arg shape). Only templates that explicitly use `{user}` still fall back to `$USER` (then `root`) because the placeholder asks for a value.
 
 ## Editing
 

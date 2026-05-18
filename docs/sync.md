@@ -24,6 +24,15 @@ Writes go the other direction — the local categories are the source of truth. 
 
 git operations use **libgit2** (vendored). There is no runtime dependency on the system `git` binary.
 
+## First-time setup from the TUI
+
+Open settings with `e`, pick **Central repo sync**, fill in the Repo URL (and optionally branch / path / local clone path). Use `Space` to flip the `auto-pull` and `auto-push` toggles — no need to type `true`/`false` by hand.
+
+- `Enter` **applies** the form. If the configured `local` directory doesn't exist yet, hoppr clones the repo automatically right away — you don't have to drop to the shell.
+- `Ctrl+T` **tests the connection** to the URL currently entered in the form. It runs a credentialed `ls-remote` against the remote without writing anything to disk, so you can confirm SSH keys / tokens before saving.
+- `Ctrl+P` **syncs now** — clone if missing, otherwise a fast-forward pull — using the persisted sync config. Useful after a teammate has pushed an inventory update.
+- `Ctrl+S` writes the local config to disk (and pushes upstream when `auto_push` is on).
+
 ## Configuration
 
 ```yaml

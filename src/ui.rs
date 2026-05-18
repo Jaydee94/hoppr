@@ -20,9 +20,10 @@ use ratatui::{
 };
 
 use crate::{
-    app::{App, Focus, Mode, VirtualCategoryKind},
+    app::{relative_time, App, Focus, MessageKind, Mode, VirtualCategoryKind},
     connect,
-    editor::{CategoryForm, EditorState, EditorView, HostForm, MENU_ITEMS},
+    editor::{sync_field_is_bool, CategoryForm, EditorState, EditorView, HostForm, MENU_ITEMS},
+    sync::SyncStatus,
     theme::{Theme, ACTIVE_GLYPH, INACTIVE_GLYPH},
 };
 
@@ -249,30 +250,17 @@ fn draw_status(frame: &mut Frame<'_>, app: &App, theme: &Theme, area: Rect) {
     let split = Layout::default()
         .direction(Direction::Horizontal)
         .constraints([
-            Constraint::Length(20),
+            Constraint::Length(32),
             Constraint::Min(10),
-            Constraint::Length(30),
+            Constraint::Length(20),
         ])
         .split(area);
 
-    let sync = Paragraph::new(Line::from(vec![
-        Span::styled(" ● ", Style::default().fg(sync_color(app, theme))),
-        Span::styled(app.sync_status.label(), Style::default().fg(theme.text_dim)),
-    ]))
-    .style(theme.base());
+    let sync = Paragraph::new(sync_chip(app, theme)).style(theme.base());
     frame.render_widget(sync, split[0]);
 
-    let mut msg = app.status_message.clone().unwrap_or_default();
-    if app.search_all && !app.search_query.trim().is_empty() {
-        if msg.is_empty() {
-            msg = "global search".to_string();
-        } else {
-            msg = format!("global search · {msg}");
-        }
-    }
-    let message = Paragraph::new(Span::styled(msg, Style::default().fg(theme.text_muted)))
-        .style(theme.base());
-    frame.render_widget(message, split[1]);
+    let middle = Paragraph::new(middle_line(app, theme)).style(theme.base());
+    frame.render_widget(middle, split[1]);
 
     let host_count = app.filtered_hosts().len();
     let total_hosts: usize = app.config.categories.iter().map(|c| c.hosts.len()).sum();
@@ -288,14 +276,92 @@ fn draw_status(frame: &mut Frame<'_>, app: &App, theme: &Theme, area: Rect) {
     frame.render_widget(stats, split[2]);
 }
 
-fn sync_color(app: &App, theme: &Theme) -> ratatui::style::Color {
-    use crate::sync::SyncStatus::*;
-    match app.sync_status {
-        Disabled | Skipped => theme.text_muted,
-        UpToDate | Pulled => theme.success,
-        PulledWithChanges => theme.accent,
-        Failed => theme.error,
+/// Compose the left-hand sync chip:
+/// `● <state> [ · unpushed]` where `<state>` is either a fixed label
+/// (off / failed / …) or a relative timestamp once we've synced at
+/// least once in this session.
+fn sync_chip(app: &App, theme: &Theme) -> Line<'static> {
+    let (dot, label) = match app.sync_status {
+        SyncStatus::Disabled => (theme.text_muted, "sync off".to_string()),
+        SyncStatus::Skipped => (theme.text_muted, "sync skipped".to_string()),
+        SyncStatus::Failed => (theme.error, "sync error".to_string()),
+        SyncStatus::UpToDate | SyncStatus::Pulled | SyncStatus::PulledWithChanges => {
+            let color = if matches!(app.sync_status, SyncStatus::PulledWithChanges) {
+                theme.accent
+            } else {
+                theme.success
+            };
+            let label = match app.last_sync_at {
+                Some(t) => format!("synced {}", relative_time(t.elapsed())),
+                None => "sync ok".to_string(),
+            };
+            (color, label)
+        }
+    };
+
+    let mut spans = vec![
+        Span::styled(" ● ", Style::default().fg(dot)),
+        Span::styled(label, Style::default().fg(theme.text_dim)),
+    ];
+    if app.sync_dirty == Some(true) {
+        spans.push(Span::styled(" · ", Style::default().fg(theme.text_muted)));
+        spans.push(Span::styled(
+            "unpushed",
+            Style::default()
+                .fg(theme.warning)
+                .add_modifier(Modifier::BOLD),
+        ));
     }
+    Line::from(spans)
+}
+
+/// Compose the middle slot:
+///   1. when a search query narrows the list, prefix with a
+///      `filter: "q"` chip (or `global: "q"` when search_all is on);
+///   2. then either the active (un-faded) status message with its
+///      severity glyph + color, or the resolved connection command of
+///      the currently selected host as a default.
+fn middle_line(app: &App, theme: &Theme) -> Line<'static> {
+    let mut spans: Vec<Span<'static>> = Vec::new();
+
+    let query = app.search_query.trim();
+    if !query.is_empty() {
+        let label = if app.search_all {
+            format!("global: \"{query}\"")
+        } else {
+            format!("filter: \"{query}\"")
+        };
+        spans.push(Span::styled(
+            label,
+            Style::default()
+                .fg(theme.primary_glow)
+                .add_modifier(Modifier::BOLD),
+        ));
+        spans.push(Span::styled("  ·  ", Style::default().fg(theme.text_muted)));
+    }
+
+    if let Some(msg) = app.active_status() {
+        let color = match msg.kind {
+            MessageKind::Success => theme.success,
+            MessageKind::Info => theme.text_dim,
+            MessageKind::Warn => theme.warning,
+            MessageKind::Error => theme.error,
+        };
+        spans.push(Span::styled(
+            format!("{} ", msg.kind.glyph()),
+            Style::default().fg(color).add_modifier(Modifier::BOLD),
+        ));
+        spans.push(Span::styled(msg.text.clone(), Style::default().fg(color)));
+    } else if let Some((host, _cat)) = app.selected_host_with_category() {
+        let preview = connect::describe(&app.config, host);
+        spans.push(Span::styled(
+            format!("[{}] ", host.name),
+            Style::default().fg(theme.text_dim),
+        ));
+        spans.push(Span::styled(preview, Style::default().fg(theme.text_muted)));
+    }
+
+    Line::from(spans)
 }
 
 fn draw_hints(frame: &mut Frame<'_>, app: &App, theme: &Theme, area: Rect) {
@@ -336,9 +402,18 @@ fn draw_hints(frame: &mut Frame<'_>, app: &App, theme: &Theme, area: Rect) {
             Some(EditorView::CategoryForm) | Some(EditorView::HostForm) => {
                 vec![("↑↓", "Move"), ("↩", "Confirm"), ("Esc", "Cancel")]
             }
-            Some(EditorView::Defaults) | Some(EditorView::Sync) => vec![
+            Some(EditorView::Defaults) => vec![
                 ("↑↓", "Move"),
                 ("↩", "Apply"),
+                ("⌃s", "Save"),
+                ("Esc", "Back"),
+            ],
+            Some(EditorView::Sync) => vec![
+                ("↑↓", "Move"),
+                ("Space", "Toggle"),
+                ("↩", "Apply"),
+                ("⌃t", "Test"),
+                ("⌃p", "Sync"),
                 ("⌃s", "Save"),
                 ("Esc", "Back"),
             ],
@@ -735,36 +810,54 @@ fn draw_sync_editor(frame: &mut Frame<'_>, editor: &EditorState, theme: &Theme, 
         .split(area);
     for (i, label) in labels.iter().enumerate() {
         let active = editor.sync_field == i;
-        let para = Paragraph::new(Line::from(vec![
-            Span::styled(
-                format!(" {label:<14} "),
-                Style::default().fg(theme.text_dim),
-            ),
-            Span::styled(
+        let value_spans = if sync_field_is_bool(i) {
+            toggle_spans(&editor.sync_inputs[i], theme)
+        } else {
+            vec![Span::styled(
                 editor.sync_inputs[i].clone(),
                 Style::default().fg(theme.text),
-            ),
-            if active {
-                Span::styled("▌", Style::default().fg(theme.accent))
-            } else {
-                Span::raw("")
-            },
-        ]))
-        .block(
-            Block::default()
-                .borders(Borders::ALL)
-                .border_type(BorderType::Rounded)
-                .border_style(Style::default().fg(if active {
-                    theme.primary
-                } else {
-                    theme.border
-                }))
-                .style(Style::default().bg(theme.surface)),
-        )
-        .style(Style::default().bg(theme.surface))
-        .wrap(Wrap { trim: true });
+            )]
+        };
+        let mut spans = vec![Span::styled(
+            format!(" {label:<14} "),
+            Style::default().fg(theme.text_dim),
+        )];
+        spans.extend(value_spans);
+        if active && !sync_field_is_bool(i) {
+            spans.push(Span::styled("▌", Style::default().fg(theme.accent)));
+        }
+        let para = Paragraph::new(Line::from(spans))
+            .block(
+                Block::default()
+                    .borders(Borders::ALL)
+                    .border_type(BorderType::Rounded)
+                    .border_style(Style::default().fg(if active {
+                        theme.primary
+                    } else {
+                        theme.border
+                    }))
+                    .style(Style::default().bg(theme.surface)),
+            )
+            .style(Style::default().bg(theme.surface))
+            .wrap(Wrap { trim: true });
         frame.render_widget(para, chunks[i]);
     }
+}
+
+/// Render a boolean field as `[●] On` / `[ ] Off`, with a faded "unset"
+/// state for fields the user hasn't touched yet.
+fn toggle_spans(value: &str, theme: &Theme) -> Vec<Span<'static>> {
+    let (mark, label, color) = match value.trim().to_lowercase().as_str() {
+        "true" | "yes" | "y" | "1" | "on" => ("[●]", "On", theme.success),
+        "false" | "no" | "n" | "0" | "off" => ("[ ]", "Off", theme.text_dim),
+        _ => ("[ ]", "Off (default)", theme.text_muted),
+    };
+    vec![
+        Span::styled(mark, Style::default().fg(color)),
+        Span::raw(" "),
+        Span::styled(label.to_string(), Style::default().fg(theme.text)),
+        Span::styled("   space to toggle", Style::default().fg(theme.text_muted)),
+    ]
 }
 
 #[cfg(test)]

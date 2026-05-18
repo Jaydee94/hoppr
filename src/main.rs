@@ -3,7 +3,8 @@ use std::{
     io::{self, Stdout, Write},
     path::{Path, PathBuf},
     process::{Command, Stdio},
-    time::Duration,
+    thread,
+    time::{Duration, Instant},
 };
 
 use anyhow::{anyhow, Context, Result};
@@ -37,7 +38,10 @@ use cli::{
     Cli, Command as CliCommand, ConfigCmd, ConnectArgs, HistoryArgs, ListArgs, ListFormat, SyncCmd,
 };
 use config::{default_config_path, Category, Config, Host, Inventory};
-use editor::{CategoryForm, EditorState, EditorView, HostForm, MENU_ITEMS};
+use editor::{
+    sync_field_is_bool, CategoryForm, EditorState, EditorView, HostForm, MENU_ITEMS,
+    SYNC_AUTO_PULL, SYNC_FIELD_COUNT, SYNC_REPO,
+};
 use favorites::FavoritesStore;
 use history::{default_history_path, HistoryStore};
 use sync::{SyncContext, SyncStatus};
@@ -129,6 +133,15 @@ fn run_tui(config: Config, config_path: PathBuf, status: SyncStatus) -> Result<(
         favorites,
         terminal_launcher,
     );
+    // Stamp the freshness chip if we actually contacted the remote, and
+    // probe the local clone so the "unpushed" indicator is accurate from
+    // the first frame.
+    if matches!(
+        app.sync_status,
+        SyncStatus::UpToDate | SyncStatus::Pulled | SyncStatus::PulledWithChanges
+    ) {
+        app.record_sync(probe_sync_dirty(&app.config));
+    }
 
     let mut terminal = setup_terminal()?;
     let run_result = event_loop(&mut terminal, &mut app);
@@ -136,6 +149,17 @@ fn run_tui(config: Config, config_path: PathBuf, status: SyncStatus) -> Result<(
     run_result?;
     restore_result?;
     Ok(())
+}
+
+/// Cheap (local-only) probe of the synced clone. Returns `None` when
+/// sync isn't configured or the clone is missing; otherwise the bool
+/// reflects `git status` — true means there are uncommitted changes.
+fn probe_sync_dirty(config: &Config) -> Option<bool> {
+    let ctx = SyncContext::from(config.sync.as_ref()?)?;
+    if !ctx.local_clone.exists() {
+        return None;
+    }
+    sync::has_uncommitted_changes(&ctx).ok()
 }
 
 fn setup_terminal() -> Result<Terminal<CrosstermBackend<Stdout>>> {
@@ -212,7 +236,7 @@ fn event_loop(terminal: &mut Terminal<CrosstermBackend<Stdout>>, app: &mut App) 
                         let starred = app.favorites.toggle(&cat_name, &host_name);
                         let _ = app.favorites.save();
                         if starred {
-                            app.set_status(format!("★  {host_name} starred"));
+                            app.set_status_success(format!("★  {host_name} starred"));
                         } else {
                             app.set_status(format!("{host_name} removed from favorites"));
                         }
@@ -249,20 +273,73 @@ fn ssh_handoff(terminal: &mut Terminal<CrosstermBackend<Stdout>>, app: &mut App)
     let _ = app.history.save();
 
     let mut command = connect::build_command(&app.config, &host);
+    let target = connection_target_label(&app.config, &host);
 
     disable_raw_mode()?;
     execute!(io::stdout(), LeaveAlternateScreen)?;
 
-    command
+    let mut child = command
         .stdin(Stdio::inherit())
         .stdout(Stdio::inherit())
         .stderr(Stdio::inherit())
-        .status()?;
+        .spawn()
+        .with_context(|| format!("failed to launch ssh to {target}"))?;
+    show_connecting_spinner(&target, &mut child);
+    let _ = child.wait()?;
 
     enable_raw_mode()?;
     execute!(io::stdout(), EnterAlternateScreen)?;
     terminal.clear()?;
     Ok(())
+}
+
+/// Render a brief "Connecting to …" spinner on stderr while the ssh child is
+/// establishing its session. Caps the animation so it can never linger over
+/// the remote shell's output: cleared as soon as the child exits, the
+/// 1.5 s budget is up, or we detect the connection has likely completed.
+fn show_connecting_spinner(target: &str, child: &mut std::process::Child) {
+    const FRAMES: &[&str] = &["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
+    const MAX_DURATION: Duration = Duration::from_millis(1500);
+    const FRAME_INTERVAL: Duration = Duration::from_millis(80);
+
+    let start = Instant::now();
+    let mut idx = 0usize;
+    loop {
+        if matches!(child.try_wait(), Ok(Some(_))) {
+            break;
+        }
+        if start.elapsed() >= MAX_DURATION {
+            break;
+        }
+        let mut err = io::stderr().lock();
+        let _ = write!(err, "\r\x1b[2K{} Connecting to {} …", FRAMES[idx], target);
+        let _ = err.flush();
+        drop(err);
+        thread::sleep(FRAME_INTERVAL);
+        idx = (idx + 1) % FRAMES.len();
+    }
+    let mut err = io::stderr().lock();
+    let _ = write!(err, "\r\x1b[2K");
+    let _ = err.flush();
+}
+
+fn connection_target_label(config: &Config, host: &Host) -> String {
+    let program = host
+        .command
+        .as_ref()
+        .unwrap_or(&config.defaults.command)
+        .program();
+    // Mirror connect::build_command: only ssh embeds a user@ prefix; for
+    // other programs the user is resolved by their own configuration.
+    let user = if program == "ssh" {
+        connect::effective_user(config, host)
+    } else {
+        None
+    };
+    match user {
+        Some(user) => format!("{user}@{}", host.ip),
+        None => host.ip.clone(),
+    }
 }
 
 /// Open the connection in a new terminal window without interrupting the TUI.
@@ -287,10 +364,10 @@ fn ssh_spawn(app: &mut App) -> Result<()> {
         Ok(()) => {
             app.history.record(&host.name, &host.ip, &category_name);
             let _ = app.history.save();
-            app.set_status(format!("Opened {} in new window", host.name));
+            app.set_status_success(format!("Opened {} in new window", host.name));
         }
         Err(err) => {
-            app.set_status(format!("Terminal launch failed: {err:#}"));
+            app.set_status_error(format!("Terminal launch failed: {err:#}"));
         }
     }
     Ok(())
@@ -446,20 +523,40 @@ fn handle_editor_event(app: &mut App, code: KeyCode, ctrl: bool) -> Result<bool>
         EditorView::Sync => match code {
             KeyCode::Esc => editor.view = EditorView::Menu,
             KeyCode::Tab | KeyCode::Down => {
-                editor.sync_field = (editor.sync_field + 1) % 6;
+                editor.sync_field = (editor.sync_field + 1) % SYNC_FIELD_COUNT;
             }
             KeyCode::BackTab | KeyCode::Up => {
-                editor.sync_field = (editor.sync_field + 6 - 1) % 6;
+                editor.sync_field = (editor.sync_field + SYNC_FIELD_COUNT - 1) % SYNC_FIELD_COUNT;
             }
-            KeyCode::Backspace => {
+            KeyCode::Backspace if !sync_field_is_bool(editor.sync_field) => {
                 editor.sync_inputs[editor.sync_field].pop();
             }
             KeyCode::Char('s') if ctrl => save_config(app)?,
+            KeyCode::Char('t') if ctrl => sync_test_connection(app),
+            KeyCode::Char('p') if ctrl => sync_pull_now(app),
+            KeyCode::Char(' ') if sync_field_is_bool(editor.sync_field) => {
+                let field = editor.sync_field;
+                let new = editor.toggle_sync_bool(field).to_string();
+                editor.dirty = true;
+                editor.flash(format!(
+                    "{} = {new}",
+                    if field == SYNC_AUTO_PULL {
+                        "auto_pull"
+                    } else {
+                        "auto_push"
+                    }
+                ));
+            }
             KeyCode::Enter => match editor.apply_sync(&mut app.config) {
-                Ok(()) => editor.flash("Sync applied · Ctrl+s to save"),
+                Ok(()) => {
+                    editor.flash("Sync applied · Ctrl+s to save");
+                    sync_clone_if_missing(app);
+                }
                 Err(err) => editor.flash(err),
             },
-            KeyCode::Char(c) => editor.sync_inputs[editor.sync_field].push(c),
+            KeyCode::Char(c) if !sync_field_is_bool(editor.sync_field) => {
+                editor.sync_inputs[editor.sync_field].push(c);
+            }
             _ => {}
         },
     }
@@ -593,13 +690,116 @@ fn handle_host_form(
     }
 }
 
+/// Probe the repo URL currently entered in the sync form.
+///
+/// Uses the URL from the form rather than the persisted config so the user
+/// can verify it before committing the change. Blocks the UI thread — fine
+/// because the libgit2 handshake is short.
+fn sync_test_connection(app: &mut App) {
+    let Some(editor) = app.editor.as_mut() else {
+        return;
+    };
+    let url = editor.sync_inputs[SYNC_REPO].trim().to_string();
+    if url.is_empty() {
+        editor.flash("Set a repo URL first");
+        return;
+    }
+    editor.flash(format!("Reaching {url} …"));
+    match sync::test_connection(&url) {
+        Ok(()) => editor.flash("Connection OK"),
+        Err(err) => editor.flash(format!("Connection failed: {err:#}")),
+    }
+}
+
+/// Run a sync (clone or fast-forward pull) using the persisted config.
+///
+/// Requires the form to have been applied with Enter first, so the new
+/// settings are visible to [`SyncContext::from`]. Blocks the UI thread.
+fn sync_pull_now(app: &mut App) {
+    let Some(sync_cfg) = app.config.sync.as_ref() else {
+        if let Some(editor) = app.editor.as_mut() {
+            editor.flash("Apply (↩) the form before syncing");
+        }
+        return;
+    };
+    let Some(ctx) = SyncContext::from(sync_cfg) else {
+        if let Some(editor) = app.editor.as_mut() {
+            editor.flash("Set a repo URL first");
+        }
+        return;
+    };
+    if let Some(editor) = app.editor.as_mut() {
+        editor.flash("Syncing …");
+    }
+    match sync::ensure_repo(&ctx) {
+        Ok(status) => {
+            app.sync_status = status;
+            let tracked = ctx.tracked_path();
+            if tracked.exists() {
+                if let Ok(inv) = Inventory::load_from_path(&tracked) {
+                    app.config.apply_inventory(inv);
+                }
+            }
+            app.record_sync(sync::has_uncommitted_changes(&ctx).ok());
+            if let Some(editor) = app.editor.as_mut() {
+                editor.flash(format!("Sync · {}", status.label()));
+            }
+        }
+        Err(err) => {
+            app.sync_status = SyncStatus::Failed;
+            if let Some(editor) = app.editor.as_mut() {
+                editor.flash(format!("Sync failed: {err:#}"));
+            }
+        }
+    }
+}
+
+/// First-time bootstrap: clone the configured repo if the local copy is
+/// missing. Called right after the sync form is applied so a fresh setup
+/// gets the repo on disk without the user having to leave the editor.
+fn sync_clone_if_missing(app: &mut App) {
+    let Some(sync_cfg) = app.config.sync.as_ref() else {
+        return;
+    };
+    let Some(ctx) = SyncContext::from(sync_cfg) else {
+        return;
+    };
+    if ctx.local_clone.exists() {
+        return;
+    }
+    if let Some(editor) = app.editor.as_mut() {
+        editor.flash(format!("Cloning into {} …", ctx.local_clone.display()));
+    }
+    match sync::ensure_repo(&ctx) {
+        Ok(status) => {
+            app.sync_status = status;
+            let tracked = ctx.tracked_path();
+            if tracked.exists() {
+                if let Ok(inv) = Inventory::load_from_path(&tracked) {
+                    app.config.apply_inventory(inv);
+                }
+            }
+            app.record_sync(sync::has_uncommitted_changes(&ctx).ok());
+            if let Some(editor) = app.editor.as_mut() {
+                editor.flash(format!("Cloned · {}", status.label()));
+            }
+        }
+        Err(err) => {
+            app.sync_status = SyncStatus::Failed;
+            if let Some(editor) = app.editor.as_mut() {
+                editor.flash(format!("Clone failed: {err:#}"));
+            }
+        }
+    }
+}
+
 fn save_config(app: &mut App) -> Result<()> {
     app.config.save(&app.config_path)?;
     if let Some(editor) = app.editor.as_mut() {
         editor.dirty = false;
         editor.flash("Saved");
     }
-    app.set_status(format!("Saved to {}", app.config_path.display()));
+    app.set_status_success(format!("Saved to {}", app.config_path.display()));
 
     if let Some(sync_cfg) = app.config.sync.as_ref() {
         if sync_cfg.auto_push.unwrap_or(false) {
@@ -609,10 +809,17 @@ fn save_config(app: &mut App) -> Result<()> {
                     .save_to_path(ctx.tracked_path())
                     .and_then(|()| sync::commit_and_push(&ctx, "chore: update hoppr inventory"));
                 match outcome {
-                    Ok(()) => app.set_status("Auto-pushed inventory upstream"),
-                    Err(err) => app.set_status(format!("Auto-push failed: {err:#}")),
+                    Ok(()) => {
+                        app.set_status_success("Auto-pushed inventory upstream");
+                        app.record_sync(Some(false));
+                    }
+                    Err(err) => app.set_status_error(format!("Auto-push failed: {err:#}")),
                 }
             }
+        } else {
+            // No auto-push — refresh the dirty flag so the chip reflects
+            // that the local clone now has uncommitted edits waiting.
+            app.sync_dirty = probe_sync_dirty(&app.config);
         }
     }
     Ok(())
