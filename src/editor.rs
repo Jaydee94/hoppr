@@ -193,7 +193,12 @@ pub struct EditorState {
     pub flash: Option<String>,
 }
 
-/// Layout of the sync editor — strings indexed by field position.
+/// Layout of the sync editor.
+///
+/// The first six positions back the form inputs in `sync_inputs`. The
+/// last three are virtual focus slots for the action buttons rendered
+/// underneath the form — they don't read from `sync_inputs`, they fire
+/// their action on Enter.
 pub const SYNC_REPO: usize = 0;
 #[allow(dead_code)]
 pub const SYNC_BRANCH: usize = 1;
@@ -203,10 +208,18 @@ pub const SYNC_PATH: usize = 2;
 pub const SYNC_LOCAL: usize = 3;
 pub const SYNC_AUTO_PULL: usize = 4;
 pub const SYNC_AUTO_PUSH: usize = 5;
-pub const SYNC_FIELD_COUNT: usize = 6;
+pub const SYNC_BTN_TEST: usize = 6;
+pub const SYNC_BTN_SYNC: usize = 7;
+pub const SYNC_BTN_SAVE: usize = 8;
+/// Total navigable elements in the sync editor (fields + buttons).
+pub const SYNC_ELEMENT_COUNT: usize = 9;
 
 pub fn sync_field_is_bool(field: usize) -> bool {
     field == SYNC_AUTO_PULL || field == SYNC_AUTO_PUSH
+}
+
+pub fn sync_field_is_button(field: usize) -> bool {
+    matches!(field, SYNC_BTN_TEST | SYNC_BTN_SYNC | SYNC_BTN_SAVE)
 }
 
 impl EditorState {

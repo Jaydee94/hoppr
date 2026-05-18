@@ -39,8 +39,9 @@ use cli::{
 };
 use config::{default_config_path, Category, Config, Host, Inventory};
 use editor::{
-    sync_field_is_bool, CategoryForm, EditorState, EditorView, HostForm, MENU_ITEMS,
-    SYNC_AUTO_PULL, SYNC_FIELD_COUNT, SYNC_REPO,
+    sync_field_is_bool, sync_field_is_button, CategoryForm, EditorState, EditorView, HostForm,
+    MENU_ITEMS, SYNC_AUTO_PULL, SYNC_AUTO_PUSH, SYNC_BTN_SAVE, SYNC_BTN_SYNC, SYNC_BTN_TEST,
+    SYNC_ELEMENT_COUNT, SYNC_REPO,
 };
 use favorites::FavoritesStore;
 use history::{default_history_path, HistoryStore};
@@ -524,17 +525,21 @@ fn handle_editor_event(app: &mut App, code: KeyCode, ctrl: bool) -> Result<bool>
         EditorView::Sync => match code {
             KeyCode::Esc => editor.view = EditorView::Menu,
             KeyCode::Tab | KeyCode::Down => {
-                editor.sync_field = (editor.sync_field + 1) % SYNC_FIELD_COUNT;
+                editor.sync_field = (editor.sync_field + 1) % SYNC_ELEMENT_COUNT;
             }
             KeyCode::BackTab | KeyCode::Up => {
-                editor.sync_field = (editor.sync_field + SYNC_FIELD_COUNT - 1) % SYNC_FIELD_COUNT;
+                editor.sync_field =
+                    (editor.sync_field + SYNC_ELEMENT_COUNT - 1) % SYNC_ELEMENT_COUNT;
             }
-            KeyCode::Backspace if !sync_field_is_bool(editor.sync_field) => {
+            KeyCode::Backspace
+                if !sync_field_is_bool(editor.sync_field)
+                    && !sync_field_is_button(editor.sync_field) =>
+            {
                 editor.sync_inputs[editor.sync_field].pop();
             }
+            // Universal save shortcut — kept alongside the [Save] button.
             KeyCode::Char('s') if ctrl => save_config(app)?,
-            KeyCode::Char('t') if ctrl => sync_test_connection(app),
-            KeyCode::Char('p') if ctrl => sync_pull_now(app),
+            // Space toggles boolean fields.
             KeyCode::Char(' ') if sync_field_is_bool(editor.sync_field) => {
                 let field = editor.sync_field;
                 let new = editor.toggle_sync_bool(field).to_string();
@@ -548,14 +553,45 @@ fn handle_editor_event(app: &mut App, code: KeyCode, ctrl: bool) -> Result<bool>
                     }
                 ));
             }
-            KeyCode::Enter => match editor.apply_sync(&mut app.config) {
-                Ok(()) => {
-                    editor.flash("Sync applied · Ctrl+s to save");
-                    sync_clone_if_missing(app);
+            KeyCode::Enter => match editor.sync_field {
+                SYNC_BTN_TEST => sync_test_connection(app),
+                SYNC_BTN_SYNC => {
+                    if sync_apply_form(app).is_ok() {
+                        sync_pull_now(app);
+                    }
                 }
-                Err(err) => editor.flash(err),
+                SYNC_BTN_SAVE => {
+                    if sync_apply_form(app).is_ok() {
+                        save_config(app)?;
+                    }
+                }
+                SYNC_AUTO_PULL | SYNC_AUTO_PUSH => {
+                    let field = editor.sync_field;
+                    let new = editor.toggle_sync_bool(field).to_string();
+                    editor.dirty = true;
+                    editor.flash(format!(
+                        "{} = {new}",
+                        if field == SYNC_AUTO_PULL {
+                            "auto_pull"
+                        } else {
+                            "auto_push"
+                        }
+                    ));
+                }
+                // Text fields: Enter applies the form so users who don't
+                // notice the buttons still have a workable shortcut.
+                _ => match editor.apply_sync(&mut app.config) {
+                    Ok(()) => {
+                        editor.flash("Sync applied");
+                        sync_clone_if_missing(app);
+                    }
+                    Err(err) => editor.flash(err),
+                },
             },
-            KeyCode::Char(c) if !sync_field_is_bool(editor.sync_field) => {
+            KeyCode::Char(c)
+                if !sync_field_is_bool(editor.sync_field)
+                    && !sync_field_is_button(editor.sync_field) =>
+            {
                 editor.sync_inputs[editor.sync_field].push(c);
             }
             _ => {}
@@ -688,6 +724,21 @@ fn handle_host_form(
             None
         }
         _ => None,
+    }
+}
+
+/// Build a `SyncConfig` from the live form inputs and persist it onto
+/// `app.config`. Surfaces the validation error through the editor's
+/// flash line; returns `Err(())` so the caller (button handler) can
+/// short-circuit and not move on to the network step.
+fn sync_apply_form(app: &mut App) -> Result<(), ()> {
+    let editor = app.editor.as_mut().expect("editor state in edit mode");
+    match editor.apply_sync(&mut app.config) {
+        Ok(()) => Ok(()),
+        Err(err) => {
+            editor.flash(err);
+            Err(())
+        }
     }
 }
 

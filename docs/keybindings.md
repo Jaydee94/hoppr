@@ -54,19 +54,21 @@ Open with `e`. Esc returns to the previous screen.
 - **Manage categories** — list, add (`a`), rename (`r` / `Enter`), delete (`d`).
 - **Manage hosts** — `Tab` cycles between categories. Same `a/r/d` semantics.
 - **Connection defaults** — edit `defaults.command` (program), default port, default user.
-- **Central repo sync** — edit the `sync.*` block. `Enter` applies the form (and clones the repo on first setup); `Space` toggles the boolean field under the cursor; `Ctrl+T` runs a connection test against the entered URL; `Ctrl+P` triggers an immediate sync (clone or fast-forward pull); `Ctrl+S` writes to disk and (if `auto_push: true`) pushes upstream.
+- **Central repo sync** — edit the `sync.*` block. Tab/↑↓ moves through the six form fields and the three action buttons underneath; `Space` toggles `auto-pull` / `auto-push`; `Enter` either applies the form (text fields), flips the toggle (booleans), or fires the button. `Ctrl+S` is a universal save shortcut.
 
-### Sync editor keys
+### Sync editor controls
 
-| key       | action                                                       |
-| --------- | ------------------------------------------------------------ |
-| `↑↓ Tab`  | Move between sync fields                                     |
-| `Space`   | Toggle `auto-pull` / `auto-push` on the focused boolean row  |
-| `Enter`   | Apply the form (auto-clones the repo if missing locally)     |
-| `Ctrl+T`  | Test the connection to the repo URL (no disk writes)         |
-| `Ctrl+P`  | Sync now — clone or fast-forward pull                        |
-| `Ctrl+S`  | Save the local config to disk                                |
-| `Esc`     | Back to the settings menu                                    |
+| element / key            | action                                                                 |
+| ------------------------ | ---------------------------------------------------------------------- |
+| `↑↓ Tab`                 | Move between fields and the three action buttons                       |
+| `Space`                  | Toggle `auto-pull` / `auto-push` on the focused boolean row            |
+| `Enter` on a text field  | Apply the form (auto-clones the repo if missing locally)               |
+| `Enter` on a toggle      | Flip the boolean                                                       |
+| `[Test connection]`      | Probe the repo URL currently in the form via libgit2 `ls-remote`       |
+| `[Sync now]`             | Apply the form, then clone or fast-forward pull                        |
+| `[Save]`                 | Apply the form, then write the local config to disk (+ push on auto_push) |
+| `Ctrl+S`                 | Same as the `[Save]` button — universal save shortcut                  |
+| `Esc`                    | Back to the settings menu                                              |
 
 ## Mnemonics
 
