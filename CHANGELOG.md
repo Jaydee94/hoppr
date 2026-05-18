@@ -1,3 +1,8 @@
+## v1.1.3 — 2026-05-18
+
+- Merge pull request #28 from Jaydee94/claude/improve-repo-sync-config-1KQKZ (6f9f521)
+- fix(sync): detect push rejections + always attempt push on auto-push (503e37b)
+
 ## v1.1.2 — 2026-05-18
 
 - Merge pull request #27 from Jaydee94/claude/improve-repo-sync-config-1KQKZ (e0c7b12)
