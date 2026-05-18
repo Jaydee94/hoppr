@@ -108,6 +108,7 @@ hoppr --sync ls                      # opt-in to a sync even with auto_pull: fal
 - The saved config file is `chmod 0600` on Unix.
 - HTTPS URLs containing `user:token@` are redacted in error messages and `hoppr sync status` output.
 - `sync.path` values containing `..` segments are rejected — hoppr falls back to `config.yaml`.
+- If `sync.local` exists but isn't a usable git repo (most commonly the half-cloned residue of a failed first run), hoppr wipes the directory and re-clones on the next start — provided it's empty or only contains a broken `.git/`. Directories with unrelated files are left alone and a clear error is surfaced so user data is never clobbered.
 
 ### Trust boundary
 

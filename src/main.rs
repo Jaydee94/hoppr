@@ -152,11 +152,12 @@ fn run_tui(config: Config, config_path: PathBuf, status: SyncStatus) -> Result<(
 }
 
 /// Cheap (local-only) probe of the synced clone. Returns `None` when
-/// sync isn't configured or the clone is missing; otherwise the bool
-/// reflects `git status` — true means there are uncommitted changes.
+/// sync isn't configured or the clone isn't a usable git repo;
+/// otherwise the bool reflects `git status` — true means there are
+/// uncommitted changes.
 fn probe_sync_dirty(config: &Config) -> Option<bool> {
     let ctx = SyncContext::from(config.sync.as_ref()?)?;
-    if !ctx.local_clone.exists() {
+    if !sync::local_repo_ready(&ctx) {
         return None;
     }
     sync::has_uncommitted_changes(&ctx).ok()
@@ -755,8 +756,9 @@ fn sync_pull_now(app: &mut App) {
 }
 
 /// First-time bootstrap: clone the configured repo if the local copy is
-/// missing. Called right after the sync form is applied so a fresh setup
-/// gets the repo on disk without the user having to leave the editor.
+/// missing (or stuck in a half-cloned state). Called right after the
+/// sync form is applied so a fresh setup gets the repo on disk without
+/// the user having to leave the editor.
 fn sync_clone_if_missing(app: &mut App) {
     let Some(sync_cfg) = app.config.sync.as_ref() else {
         return;
@@ -764,7 +766,7 @@ fn sync_clone_if_missing(app: &mut App) {
     let Some(ctx) = SyncContext::from(sync_cfg) else {
         return;
     };
-    if ctx.local_clone.exists() {
+    if sync::local_repo_ready(&ctx) {
         return;
     }
     if let Some(editor) = app.editor.as_mut() {
