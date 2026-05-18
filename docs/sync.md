@@ -22,7 +22,7 @@ When `sync.repo` is set, every launch of `hoppr` does:
 
 Writes go the other direction — the local categories are the source of truth. Use `hoppr sync push` (or set `auto_push: true`) to write the inventory subset back into the clone, commit, and push. Your `defaults` and `sync` stanzas stay out of the repo.
 
-git operations use **libgit2** (vendored). There is no runtime dependency on the system `git` binary.
+git operations use **libgit2** (vendored, with bundled libssh2 + OpenSSL). Both HTTPS (`https://…`) and SSH (`git@host:…` / `ssh://…`) repo URLs are supported, and there is no runtime dependency on the system `git` / `ssh` binaries.
 
 ## First-time setup from the TUI
 

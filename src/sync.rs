@@ -108,6 +108,38 @@ pub enum SyncStatus {
     Failed,
 }
 
+/// Build a fresh set of `RemoteCallbacks` wired to our credentials
+/// helper.
+///
+/// SSH is a two-round flow: libgit2 first asks for the *username*
+/// (separate from the credential), then for the actual key. USERNAME
+/// requests are idempotent — libgit2 may legitimately ask for it more
+/// than once across a single operation (e.g. test_connection on some
+/// libssh2 builds), so we just keep answering. The *real credential*
+/// round is gated: a second invocation means our creds were rejected
+/// and we bail out instead of spinning forever.
+fn make_auth_callbacks() -> RemoteCallbacks<'static> {
+    let mut callbacks = RemoteCallbacks::new();
+    let mut answered_credential = false;
+    callbacks.credentials(move |url, user, allowed| {
+        if allowed.contains(git2::CredentialType::USERNAME) {
+            return Cred::username(user.unwrap_or("git"));
+        }
+        if answered_credential {
+            return Err(git2::Error::from_str("credentials already attempted"));
+        }
+        answered_credential = true;
+        credentials_cb(url, user, allowed)
+    });
+    // Explicit passthrough: defer to libgit2's defaults (known_hosts for
+    // SSH, system CA roots for HTTPS). Without this, some libgit2 builds
+    // skip the host check entirely for SSH detached remotes, which would
+    // make the test button report success against unreachable hosts.
+    callbacks
+        .certificate_check(|_cert, _host| Ok(git2::CertificateCheckStatus::CertificatePassthrough));
+    callbacks
+}
+
 impl SyncStatus {
     pub fn label(self) -> &'static str {
         match self {
@@ -129,18 +161,19 @@ impl SyncStatus {
 pub fn test_connection(repo_url: &str) -> Result<()> {
     let mut remote = git2::Remote::create_detached(repo_url)
         .with_context(|| format!("invalid repo URL: {}", redact_url(repo_url)))?;
-    let mut callbacks = RemoteCallbacks::new();
-    let mut attempts = 0u32;
-    callbacks.credentials(move |url, user, allowed| {
-        attempts += 1;
-        if attempts > 1 {
-            return Err(git2::Error::from_str("credentials already attempted"));
-        }
-        credentials_cb(url, user, allowed)
-    });
     remote
-        .connect_auth(git2::Direction::Fetch, Some(callbacks), None)
+        .connect_auth(git2::Direction::Fetch, Some(make_auth_callbacks()), None)
         .with_context(|| format!("failed to reach {}", redact_url(repo_url)))?;
+    // Force a ref listing — for SSH transports this is what actually
+    // exercises authentication end-to-end; without it some libgit2 builds
+    // would report the connect as successful even when auth would later
+    // fail on a real fetch/push.
+    let _ = remote.list().with_context(|| {
+        format!(
+            "connected but could not list refs on {}",
+            redact_url(repo_url)
+        )
+    })?;
     remote.disconnect().ok();
     Ok(())
 }
@@ -176,17 +209,8 @@ pub fn ensure_repo(ctx: &SyncContext) -> Result<SyncStatus> {
                 format!("failed to create sync parent dir: {}", parent.display())
             })?;
         }
-        let mut callbacks = RemoteCallbacks::new();
-        let mut attempts = 0u32;
-        callbacks.credentials(move |url, user, allowed| {
-            attempts += 1;
-            if attempts > 1 {
-                return Err(git2::Error::from_str("credentials already attempted"));
-            }
-            credentials_cb(url, user, allowed)
-        });
         let mut fetch_opts = FetchOptions::new();
-        fetch_opts.remote_callbacks(callbacks);
+        fetch_opts.remote_callbacks(make_auth_callbacks());
 
         let mut builder = git2::build::RepoBuilder::new();
         builder.fetch_options(fetch_opts);
@@ -267,17 +291,8 @@ pub fn pull(ctx: &SyncContext) -> Result<SyncStatus> {
             .find_remote("origin")
             .context("missing origin remote")?;
 
-        let mut callbacks = RemoteCallbacks::new();
-        let mut attempts = 0u32;
-        callbacks.credentials(move |url, user, allowed| {
-            attempts += 1;
-            if attempts > 1 {
-                return Err(git2::Error::from_str("credentials already attempted"));
-            }
-            credentials_cb(url, user, allowed)
-        });
         let mut fetch_opts = FetchOptions::new();
-        fetch_opts.remote_callbacks(callbacks);
+        fetch_opts.remote_callbacks(make_auth_callbacks());
 
         remote
             .fetch(&[ctx.branch.as_str()], Some(&mut fetch_opts), None)
@@ -357,17 +372,8 @@ pub fn commit_and_push(ctx: &SyncContext, message: &str) -> Result<()> {
     let mut remote = repo
         .find_remote("origin")
         .context("missing origin remote")?;
-    let mut callbacks = RemoteCallbacks::new();
-    let mut attempts = 0u32;
-    callbacks.credentials(move |url, user, allowed| {
-        attempts += 1;
-        if attempts > 1 {
-            return Err(git2::Error::from_str("credentials already attempted"));
-        }
-        credentials_cb(url, user, allowed)
-    });
     let mut push_opts = PushOptions::new();
-    push_opts.remote_callbacks(callbacks);
+    push_opts.remote_callbacks(make_auth_callbacks());
 
     let refspec = format!("refs/heads/{0}:refs/heads/{0}", ctx.branch);
     remote
@@ -394,15 +400,37 @@ fn credentials_cb(
 ) -> Result<Cred, git2::Error> {
     if allowed.contains(git2::CredentialType::SSH_KEY) {
         let user = username.unwrap_or("git");
+        // ssh-agent first — handles passphrase-protected keys
+        // transparently. Many setups (corp laptops, ~/.ssh/config with
+        // `AddKeysToAgent yes`) rely on this exclusively.
         if let Ok(cred) = Cred::ssh_key_from_agent(user) {
             return Ok(cred);
         }
+        // Then walk ~/.ssh for private keys. Standard filenames first
+        // (so we don't pick a less-likely candidate), then any other
+        // `id_*` file — covers custom-named keys like `id_work`.
         if let Some(home) = directories::UserDirs::new() {
             let ssh_dir = home.home_dir().join(".ssh");
-            for name in ["id_ed25519", "id_rsa", "id_ecdsa"] {
+            for name in ["id_ed25519", "id_rsa", "id_ecdsa", "id_dsa"] {
                 let key = ssh_dir.join(name);
                 if key.exists() {
-                    return Cred::ssh_key(user, None, &key, None);
+                    if let Ok(cred) = Cred::ssh_key(user, None, &key, None) {
+                        return Ok(cred);
+                    }
+                }
+            }
+            if let Ok(entries) = std::fs::read_dir(&ssh_dir) {
+                for entry in entries.flatten() {
+                    let path = entry.path();
+                    let Some(name) = path.file_name().and_then(|n| n.to_str()) else {
+                        continue;
+                    };
+                    if !name.starts_with("id_") || name.ends_with(".pub") {
+                        continue;
+                    }
+                    if let Ok(cred) = Cred::ssh_key(user, None, &path, None) {
+                        return Ok(cred);
+                    }
                 }
             }
         }
