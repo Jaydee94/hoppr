@@ -304,13 +304,7 @@ fn show_connecting_spinner(target: &str, child: &mut std::process::Child) {
 }
 
 fn connection_target_label(config: &Config, host: &Host) -> String {
-    let effective_user = host
-        .user
-        .clone()
-        .or_else(|| config.defaults.user.clone())
-        .or_else(|| std::env::var("USER").ok())
-        .filter(|v| !v.is_empty());
-    match effective_user {
+    match connect::effective_user(config, host) {
         Some(user) => format!("{user}@{}", host.ip),
         None => host.ip.clone(),
     }

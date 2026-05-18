@@ -54,7 +54,7 @@ categories:
 | ------------------ | -------------- | ------- | ------------------------------------------------------------------ |
 | `command`          | string \| obj  | `ssh`   | Default connect command for hosts that don't set one.              |
 | `port`             | `u16`          | `22`    | Default port substituted into `{port}` and `ssh -p`.               |
-| `user`             | string         | none    | Used when a host has no `user` field and `$USER` is empty.         |
+| `user`             | string         | none    | Used when a host has no `user` field. When unset, hoppr omits the `user@` prefix entirely so `ssh_config` (`User` directive) or the program's own default can take over. |
 | `terminal_command` | string         | auto    | Terminal emulator used by `t` (open in new tab). When unset, hoppr auto-detects from the environment (Windows Terminal, iTerm2, GNOME Terminal, Konsole, xterm). Examples: `"wt"`, `"gnome-terminal"`, `"alacritty -e"`. |
 
 ### Alternative connect commands
@@ -117,10 +117,22 @@ For one-off connections that don't fit a template — e.g. jumping through a bas
 | ---------- | ------- | -------- | -------------------------------------- |
 | `name`     | string  | ✓        | Display name and fuzzy-search target.  |
 | `ip`       | string  | ✓        | IP, hostname or any string SSH accepts.|
-| `user`     | string  |          | Falls back to `defaults.user` → `$USER` → `root`. |
+| `user`     | string  |          | Falls back to `defaults.user`. If neither is set, hoppr drops the `user@` prefix from the connect command so `~/.ssh/config` (or whatever your connect program reads) can fill it in. Set `user: ""` to override an inherited `defaults.user` and force "no user" for a single host. |
 | `port`     | `u16`   |          | Falls back to `defaults.port`.         |
 | `cmd`      | string  |          | Raw shell command. Wins over everything else. |
 | `command`  | string \| obj |    | Per-host structured override.          |
+
+### Letting external tools set the user
+
+Sometimes the user is already defined in `~/.ssh/config`:
+
+```ssh-config
+Host bastion.example.com
+    User deploy
+    IdentityFile ~/.ssh/deploy_ed25519
+```
+
+Leave `user` out of the hoppr config for those hosts and the rendered command becomes `ssh -p 22 bastion.example.com`. SSH then picks up `User deploy` from the config. The same trick works for templates that don't reference `{user}` — only templates that explicitly use `{user}` still fall back to `$USER` (then `root`) because the placeholder asks for a value.
 
 ## Editing
 
