@@ -28,10 +28,13 @@ git operations use **libgit2** (vendored). There is no runtime dependency on the
 
 Open settings with `e`, pick **Central repo sync**, fill in the Repo URL (and optionally branch / path / local clone path). Use `Space` to flip the `auto-pull` and `auto-push` toggles — no need to type `true`/`false` by hand.
 
-- `Enter` **applies** the form. If the configured `local` directory doesn't exist yet, hoppr clones the repo automatically right away — you don't have to drop to the shell.
-- `Ctrl+T` **tests the connection** to the URL currently entered in the form. It runs a credentialed `ls-remote` against the remote without writing anything to disk, so you can confirm SSH keys / tokens before saving.
-- `Ctrl+P` **syncs now** — clone if missing, otherwise a fast-forward pull — using the persisted sync config. Useful after a teammate has pushed an inventory update.
-- `Ctrl+S` writes the local config to disk (and pushes upstream when `auto_push` is on).
+Three action buttons sit underneath the form. Tab/↑↓ moves focus through them; `Enter` activates the focused button.
+
+- **[Test connection]** runs a credentialed `ls-remote` against the URL currently in the form. Nothing is written to disk, so you can confirm SSH keys / tokens before committing the config.
+- **[Sync now]** applies the form and then clones (first run) or fast-forward pulls. The latest inventory is loaded into the running session as soon as the network call finishes.
+- **[Save]** applies the form and writes the local config to disk. When `auto-push` is on, the inventory is committed and pushed upstream in the same step. `Ctrl+S` is kept as a parallel keyboard shortcut for muscle memory.
+
+Pressing `Enter` while focused on a plain text field still applies the form silently — and triggers an auto-clone if `sync.local` is missing — so the form remains usable for keyboard-only flows.
 
 ## Configuration
 
@@ -108,6 +111,7 @@ hoppr --sync ls                      # opt-in to a sync even with auto_pull: fal
 - The saved config file is `chmod 0600` on Unix.
 - HTTPS URLs containing `user:token@` are redacted in error messages and `hoppr sync status` output.
 - `sync.path` values containing `..` segments are rejected — hoppr falls back to `config.yaml`.
+- If `sync.local` exists but isn't a usable git repo (most commonly the half-cloned residue of a failed first run), hoppr wipes the directory and re-clones on the next start — provided it's empty or only contains a broken `.git/`. Directories with unrelated files are left alone and a clear error is surfaced so user data is never clobbered.
 
 ### Trust boundary
 

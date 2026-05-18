@@ -22,7 +22,10 @@ use ratatui::{
 use crate::{
     app::{relative_time, App, Focus, MessageKind, Mode, VirtualCategoryKind},
     connect,
-    editor::{sync_field_is_bool, CategoryForm, EditorState, EditorView, HostForm, MENU_ITEMS},
+    editor::{
+        sync_field_is_bool, CategoryForm, EditorState, EditorView, HostForm, MENU_ITEMS,
+        SYNC_BTN_SAVE, SYNC_BTN_SYNC, SYNC_BTN_TEST,
+    },
     sync::SyncStatus,
     theme::{Theme, ACTIVE_GLYPH, INACTIVE_GLYPH},
 };
@@ -411,9 +414,7 @@ fn draw_hints(frame: &mut Frame<'_>, app: &App, theme: &Theme, area: Rect) {
             Some(EditorView::Sync) => vec![
                 ("↑↓", "Move"),
                 ("Space", "Toggle"),
-                ("↩", "Apply"),
-                ("⌃t", "Test"),
-                ("⌃p", "Sync"),
+                ("↩", "Apply / activate"),
                 ("⌃s", "Save"),
                 ("Esc", "Back"),
             ],
@@ -799,12 +800,13 @@ fn draw_sync_editor(frame: &mut Frame<'_>, editor: &EditorState, theme: &Theme, 
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Length(3),
-            Constraint::Length(3),
-            Constraint::Length(3),
-            Constraint::Length(3),
-            Constraint::Length(3),
-            Constraint::Length(3),
+            Constraint::Length(3), // Repo URL
+            Constraint::Length(3), // Branch
+            Constraint::Length(3), // Path in repo
+            Constraint::Length(3), // Local clone
+            Constraint::Length(3), // Auto-pull toggle
+            Constraint::Length(3), // Auto-push toggle
+            Constraint::Length(3), // Action buttons row
             Constraint::Min(0),
         ])
         .split(area);
@@ -841,6 +843,55 @@ fn draw_sync_editor(frame: &mut Frame<'_>, editor: &EditorState, theme: &Theme, 
             .style(Style::default().bg(theme.surface))
             .wrap(Wrap { trim: true });
         frame.render_widget(para, chunks[i]);
+    }
+
+    draw_sync_buttons(frame, editor, theme, chunks[6]);
+}
+
+/// Render the row of action buttons under the sync form. Each button is
+/// a focusable element with its own `sync_field` index — Enter on the
+/// focused button fires its action in the editor event handler.
+fn draw_sync_buttons(frame: &mut Frame<'_>, editor: &EditorState, theme: &Theme, area: Rect) {
+    let button_chunks = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([
+            Constraint::Ratio(1, 3),
+            Constraint::Ratio(1, 3),
+            Constraint::Ratio(1, 3),
+        ])
+        .split(area);
+
+    let buttons: [(usize, &str, ratatui::style::Color); 3] = [
+        (SYNC_BTN_TEST, "Test connection", theme.accent),
+        (SYNC_BTN_SYNC, "Sync now", theme.primary_glow),
+        (SYNC_BTN_SAVE, "Save", theme.success),
+    ];
+    for (i, (field, label, accent)) in buttons.iter().enumerate() {
+        let active = editor.sync_field == *field;
+        let (bg, fg, border) = if active {
+            (theme.surface_alt, theme.text, *accent)
+        } else {
+            (theme.surface, theme.text_dim, theme.border)
+        };
+        let mut text_style = Style::default().fg(fg);
+        if active {
+            text_style = text_style.add_modifier(Modifier::BOLD);
+        }
+        let body = Paragraph::new(Line::from(Span::styled(format!(" {label} "), text_style)))
+            .alignment(Alignment::Center)
+            .block(
+                Block::default()
+                    .borders(Borders::ALL)
+                    .border_type(if active {
+                        BorderType::Thick
+                    } else {
+                        BorderType::Rounded
+                    })
+                    .border_style(Style::default().fg(border).bg(bg))
+                    .style(Style::default().bg(bg)),
+            )
+            .style(Style::default().bg(bg));
+        frame.render_widget(body, button_chunks[i]);
     }
 }
 

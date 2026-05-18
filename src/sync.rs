@@ -147,7 +147,30 @@ pub fn test_connection(repo_url: &str) -> Result<()> {
 
 /// Clone the configured repo if missing, otherwise fast-forward pull.
 pub fn ensure_repo(ctx: &SyncContext) -> Result<SyncStatus> {
-    if !ctx.local_clone.exists() {
+    let needs_clone = match local_clone_state(&ctx.local_clone) {
+        LocalCloneState::Absent => true,
+        LocalCloneState::ValidRepo => false,
+        LocalCloneState::SafelyReplaceable => {
+            // Most often the residue of a failed first-time clone — wipe
+            // and try again so the user doesn't have to drop to a shell.
+            fs::remove_dir_all(&ctx.local_clone).with_context(|| {
+                format!(
+                    "failed to clean up partial clone at {}",
+                    ctx.local_clone.display()
+                )
+            })?;
+            true
+        }
+        LocalCloneState::OccupiedNonRepo => {
+            return Err(anyhow!(
+                "{} exists but is not a git repository, and is not empty — refusing to clobber. \
+                 Remove the directory manually or point sync.local at a different path.",
+                ctx.local_clone.display()
+            ));
+        }
+    };
+
+    if needs_clone {
         if let Some(parent) = ctx.local_clone.parent() {
             fs::create_dir_all(parent).with_context(|| {
                 format!("failed to create sync parent dir: {}", parent.display())
@@ -179,6 +202,59 @@ pub fn ensure_repo(ctx: &SyncContext) -> Result<SyncStatus> {
     }
 
     pull(ctx)
+}
+
+/// What's currently sitting at the local-clone path. Used by
+/// [`ensure_repo`] to decide between "clone fresh", "pull", "wipe + re-clone"
+/// and "refuse to touch".
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum LocalCloneState {
+    /// Path doesn't exist yet.
+    Absent,
+    /// Path is a directory that libgit2 can open as a repository.
+    ValidRepo,
+    /// Path is a directory but not a usable repo, and only contains
+    /// `.git/` entries (or is empty) — looks like a half-clone we can
+    /// safely wipe and retry.
+    SafelyReplaceable,
+    /// Path exists with unknown contents — needs manual intervention so
+    /// hoppr doesn't trash someone's files.
+    OccupiedNonRepo,
+}
+
+fn local_clone_state(path: &Path) -> LocalCloneState {
+    if !path.exists() {
+        return LocalCloneState::Absent;
+    }
+    if Repository::open(path).is_ok() {
+        return LocalCloneState::ValidRepo;
+    }
+    if dir_holds_only_git_traces(path) {
+        LocalCloneState::SafelyReplaceable
+    } else {
+        LocalCloneState::OccupiedNonRepo
+    }
+}
+
+/// True when the directory is empty or only contains a (potentially
+/// broken) `.git` entry — the recoverable residue of a failed clone.
+fn dir_holds_only_git_traces(path: &Path) -> bool {
+    let Ok(entries) = fs::read_dir(path) else {
+        return false;
+    };
+    for entry in entries.flatten() {
+        if entry.file_name() != ".git" {
+            return false;
+        }
+    }
+    true
+}
+
+/// True when libgit2 can open the configured clone as a repository.
+/// Surfaced so callers don't have to import `git2` just to gate on
+/// "is the local clone usable".
+pub fn local_repo_ready(ctx: &SyncContext) -> bool {
+    ctx.local_clone.exists() && Repository::open(&ctx.local_clone).is_ok()
 }
 
 /// Fast-forward pull. Returns whether the working copy moved.
@@ -437,5 +513,50 @@ mod tests {
         let ctx = SyncContext::from(&sync).unwrap();
         // Falls back to the safe default instead of honoring `..`.
         assert_eq!(ctx.file_in_repo, "config.yaml");
+    }
+
+    #[test]
+    fn local_clone_state_classifies_absent_dir() {
+        let tmp = tempfile::TempDir::new().expect("tempdir");
+        let missing = tmp.path().join("does-not-exist");
+        assert_eq!(local_clone_state(&missing), LocalCloneState::Absent);
+    }
+
+    #[test]
+    fn local_clone_state_classifies_empty_dir_as_replaceable() {
+        let tmp = tempfile::TempDir::new().expect("tempdir");
+        assert_eq!(
+            local_clone_state(tmp.path()),
+            LocalCloneState::SafelyReplaceable
+        );
+    }
+
+    #[test]
+    fn local_clone_state_classifies_dir_with_only_broken_git_as_replaceable() {
+        let tmp = tempfile::TempDir::new().expect("tempdir");
+        // A failed clone often leaves an empty .git/ behind that
+        // Repository::open can't load.
+        fs::create_dir(tmp.path().join(".git")).expect("create .git");
+        assert_eq!(
+            local_clone_state(tmp.path()),
+            LocalCloneState::SafelyReplaceable
+        );
+    }
+
+    #[test]
+    fn local_clone_state_refuses_to_clobber_unknown_contents() {
+        let tmp = tempfile::TempDir::new().expect("tempdir");
+        fs::write(tmp.path().join("notes.txt"), "important user data").expect("write");
+        assert_eq!(
+            local_clone_state(tmp.path()),
+            LocalCloneState::OccupiedNonRepo
+        );
+    }
+
+    #[test]
+    fn local_clone_state_recognises_real_git_repo() {
+        let tmp = tempfile::TempDir::new().expect("tempdir");
+        Repository::init(tmp.path()).expect("init repo");
+        assert_eq!(local_clone_state(tmp.path()), LocalCloneState::ValidRepo);
     }
 }
