@@ -304,7 +304,19 @@ fn show_connecting_spinner(target: &str, child: &mut std::process::Child) {
 }
 
 fn connection_target_label(config: &Config, host: &Host) -> String {
-    match connect::effective_user(config, host) {
+    let program = host
+        .command
+        .as_ref()
+        .unwrap_or(&config.defaults.command)
+        .program();
+    // Mirror connect::build_command: only ssh embeds a user@ prefix; for
+    // other programs the user is resolved by their own configuration.
+    let user = if program == "ssh" {
+        connect::effective_user(config, host)
+    } else {
+        None
+    };
+    match user {
         Some(user) => format!("{user}@{}", host.ip),
         None => host.ip.clone(),
     }

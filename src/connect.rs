@@ -38,26 +38,37 @@ pub fn build_command(config: &Config, host: &Host) -> Command {
             command.arg(expand(raw, &user_for_template, host, port));
         }
     } else {
-        // Default arg recipes — when no user is configured anywhere, omit
-        // the `user@` prefix so ssh_config / the program's own defaults can
-        // fill it in.
-        match template.program() {
-            "ssh" | "autossh" => {
+        // Default arg recipes. Only `ssh` injects a `user@` prefix from
+        // the host/defaults — every other program either has its own
+        // user-resolution (mosh, autossh via ssh_config, kitty +kitten,
+        // …) or doesn't accept a user at all (telnet).
+        let program = template.program();
+        let ssh_user = if program == "ssh" {
+            explicit_user.as_deref()
+        } else {
+            None
+        };
+        match program {
+            "ssh" => {
                 command.arg("-p").arg(port.to_string());
-                command.arg(host_arg(explicit_user.as_deref(), &host.ip));
+                command.arg(host_arg(ssh_user, &host.ip));
+            }
+            "autossh" => {
+                command.arg("-p").arg(port.to_string());
+                command.arg(&host.ip);
             }
             "mosh" => {
                 if port != 22 {
                     command.arg("--ssh").arg(format!("ssh -p {port}"));
                 }
-                command.arg(host_arg(explicit_user.as_deref(), &host.ip));
+                command.arg(&host.ip);
             }
             "telnet" => {
                 command.arg(&host.ip);
                 command.arg(port.to_string());
             }
             _ => {
-                command.arg(host_arg(explicit_user.as_deref(), &host.ip));
+                command.arg(&host.ip);
             }
         }
     }
@@ -96,15 +107,23 @@ pub fn describe(config: &Config, host: &Host) -> String {
     }
     let template = host.command.as_ref().unwrap_or(&config.defaults.command);
     let program = template.program();
-    let explicit_user = effective_user(config, host);
     let port = host.port.unwrap_or(config.defaults.port);
 
-    let target = host_arg(explicit_user.as_deref(), &host.ip);
+    // Only `ssh` shows a user@ prefix — other programs read the user from
+    // their own configuration (or don't accept one).
+    let ssh_user = if program == "ssh" {
+        effective_user(config, host)
+    } else {
+        None
+    };
+    let target = host_arg(ssh_user.as_deref(), &host.ip);
+
     match program {
-        "ssh" | "autossh" => format!("{program} {target}:{port}"),
-        "mosh" => format!("mosh {target}"),
+        "ssh" => format!("ssh {target}:{port}"),
+        "autossh" => format!("autossh {}:{port}", host.ip),
+        "mosh" => format!("mosh {}", host.ip),
         "telnet" => format!("telnet {} {port}", host.ip),
-        other => format!("{other} {target}"),
+        other => format!("{other} {}", host.ip),
     }
 }
 
@@ -169,14 +188,33 @@ mod tests {
     }
 
     #[test]
-    fn mosh_program_emits_user_at_host() {
+    fn mosh_program_never_embeds_user_prefix() {
         let cfg = make_config(ConnectCommand::Program("mosh".into()));
         let mut h = host();
         h.port = None;
+        // Even with host.user set, mosh defers to its own user resolution.
         let cmd = build_command(&cfg, &h);
         let args: Vec<&str> = cmd.get_args().map(|a| a.to_str().unwrap()).collect();
         assert_eq!(cmd.get_program(), "mosh");
-        assert_eq!(args, vec!["alice@10.0.0.1"]);
+        assert_eq!(args, vec!["10.0.0.1"]);
+    }
+
+    #[test]
+    fn autossh_omits_user_prefix_even_when_user_set() {
+        let cfg = make_config(ConnectCommand::Program("autossh".into()));
+        let cmd = build_command(&cfg, &host());
+        let args: Vec<&str> = cmd.get_args().map(|a| a.to_str().unwrap()).collect();
+        assert_eq!(cmd.get_program(), "autossh");
+        assert_eq!(args, vec!["-p", "2200", "10.0.0.1"]);
+    }
+
+    #[test]
+    fn custom_program_omits_user_prefix() {
+        let cfg = make_config(ConnectCommand::Program("kitty".into()));
+        let cmd = build_command(&cfg, &host());
+        let args: Vec<&str> = cmd.get_args().map(|a| a.to_str().unwrap()).collect();
+        assert_eq!(cmd.get_program(), "kitty");
+        assert_eq!(args, vec!["10.0.0.1"]);
     }
 
     #[test]
@@ -237,6 +275,18 @@ mod tests {
         let mut h = host();
         h.user = None;
         assert_eq!(describe(&cfg, &h), "ssh 10.0.0.1:2200");
+    }
+
+    #[test]
+    fn describe_mosh_drops_user_even_when_configured() {
+        let cfg = make_config(ConnectCommand::Program("mosh".into()));
+        assert_eq!(describe(&cfg, &host()), "mosh 10.0.0.1");
+    }
+
+    #[test]
+    fn describe_custom_program_drops_user_even_when_configured() {
+        let cfg = make_config(ConnectCommand::Program("kitty".into()));
+        assert_eq!(describe(&cfg, &host()), "kitty 10.0.0.1");
     }
 
     #[test]
