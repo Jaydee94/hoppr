@@ -12,8 +12,10 @@
 //! don't depend on the system `git` binary at runtime.
 
 use std::{
+    cell::RefCell,
     fs,
     path::{Path, PathBuf},
+    rc::Rc,
 };
 
 use anyhow::{anyhow, Context, Result};
@@ -334,6 +336,16 @@ fn fast_forward(repo: &Repository, branch: &str, fetch_commit: &AnnotatedCommit<
 }
 
 /// Stage, commit and push the tracked config file.
+///
+/// Two libgit2 quirks worth knowing about:
+///
+/// * If the working-tree file already matches `HEAD`, we skip the commit
+///   but **still attempt the push** — there may be unpushed local
+///   commits left over from a previous round that silently failed.
+/// * `remote.push` returns `Ok` even when the server rejects the ref
+///   update. We install a `push_update_reference` callback to capture
+///   per-ref status and turn rejections into hard errors so callers
+///   (and the user's status bar) see the real result.
 pub fn commit_and_push(ctx: &SyncContext, message: &str) -> Result<()> {
     let repo = Repository::open(&ctx.local_clone)
         .with_context(|| format!("failed to open repo: {}", ctx.local_clone.display()))?;
@@ -346,39 +358,59 @@ pub fn commit_and_push(ctx: &SyncContext, message: &str) -> Result<()> {
     let tree_oid = index.write_tree()?;
     let tree = repo.find_tree(tree_oid)?;
 
-    let signature = make_signature(&repo)?;
-
     let parent_commit = match repo.head() {
         Ok(head) => Some(head.peel_to_commit()?),
         Err(_) => None,
     };
 
-    if let Some(parent) = &parent_commit {
-        if parent.tree()?.id() == tree.id() {
-            return Ok(());
-        }
-    }
+    let needs_commit = match &parent_commit {
+        Some(parent) => parent.tree()?.id() != tree.id(),
+        None => true,
+    };
 
-    let parents: Vec<&git2::Commit> = parent_commit.iter().collect();
-    repo.commit(
-        Some("HEAD"),
-        &signature,
-        &signature,
-        message,
-        &tree,
-        &parents,
-    )?;
+    if needs_commit {
+        let signature = make_signature(&repo)?;
+        let parents: Vec<&git2::Commit> = parent_commit.iter().collect();
+        repo.commit(
+            Some("HEAD"),
+            &signature,
+            &signature,
+            message,
+            &tree,
+            &parents,
+        )?;
+    }
 
     let mut remote = repo
         .find_remote("origin")
         .context("missing origin remote")?;
+
+    let rejections: Rc<RefCell<Vec<String>>> = Rc::new(RefCell::new(Vec::new()));
+    let mut callbacks = make_auth_callbacks();
+    {
+        let rejections = rejections.clone();
+        callbacks.push_update_reference(move |refname, status| {
+            if let Some(msg) = status {
+                rejections.borrow_mut().push(format!("{refname}: {msg}"));
+            }
+            Ok(())
+        });
+    }
     let mut push_opts = PushOptions::new();
-    push_opts.remote_callbacks(make_auth_callbacks());
+    push_opts.remote_callbacks(callbacks);
 
     let refspec = format!("refs/heads/{0}:refs/heads/{0}", ctx.branch);
     remote
         .push(&[refspec.as_str()], Some(&mut push_opts))
-        .context("git push failed")?;
+        .with_context(|| format!("git push to {} failed", ctx.safe_url()))?;
+
+    let rejections = rejections.borrow();
+    if !rejections.is_empty() {
+        return Err(anyhow!(
+            "remote rejected the push: {}",
+            rejections.join("; ")
+        ));
+    }
     Ok(())
 }
 
