@@ -1,6 +1,6 @@
 [package]
 name = "hoppr"
-version = "1.1.0"
+version = "1.1.1"
 edition = "2021"
 description = "A fast, minimal TUI launcher for SSH and other remote shells."
 license = "MIT"

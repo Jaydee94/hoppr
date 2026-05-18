@@ -1,3 +1,9 @@
+## v1.1.1 — 2026-05-18
+
+- Merge pull request #26 from Jaydee94/claude/improve-repo-sync-config-1KQKZ (4ccc4eb)
+- feat(editor): replace sync hotkeys with focusable action buttons (3b8dab3)
+- fix(sync): recover from half-cloned local repo on startup (4d05a73)
+
 ## v1.1.0 — 2026-05-18
 
 - Merge pull request #25 from Jaydee94/claude/improve-repo-sync-config-1KQKZ (5b8188f)
