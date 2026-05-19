@@ -29,13 +29,25 @@ pub struct HostForm {
     pub mode_create: bool,
     pub category_index: usize,
     pub host_index: Option<usize>,
-    pub fields: [String; 6], // name, ip, user, port, cmd, command_program
+    pub fields: [String; 7], // name, ip, user, port, cmd, command_program, command_args
     pub focused: usize,
 }
 
 impl HostForm {
-    pub const LABELS: [&'static str; 6] =
-        ["Name", "IP / Host", "User", "Port", "Raw cmd", "Program"];
+    pub const LABELS: [&'static str; 7] = [
+        "Name",
+        "IP / Host",
+        "User",
+        "Port",
+        "Raw cmd",
+        "Program",
+        "Args",
+    ];
+
+    /// Hint shown beneath the Args input — surfaces the splitting rule and the
+    /// available placeholders without forcing the user into the YAML docs.
+    pub const ARGS_HINT: &'static str =
+        " space-separated · supports {user}/{host}/{ip}/{port}/{name}";
 
     pub fn new_create(category_index: usize) -> Self {
         Self {
@@ -48,16 +60,19 @@ impl HostForm {
     }
 
     pub fn new_edit(category_index: usize, host_index: usize, host: &Host) -> Self {
+        let (program, args) = match host.command.as_ref() {
+            Some(ConnectCommand::Program(p)) => (p.clone(), String::new()),
+            Some(ConnectCommand::Template { program, args }) => (program.clone(), args.join(" ")),
+            None => (String::new(), String::new()),
+        };
         let fields = [
             host.name.clone(),
             host.ip.clone(),
             host.user.clone().unwrap_or_default(),
             host.port.map(|p| p.to_string()).unwrap_or_default(),
             host.cmd.clone().unwrap_or_default(),
-            host.command
-                .as_ref()
-                .map(|c| c.program().to_string())
-                .unwrap_or_default(),
+            program,
+            args,
         ];
         Self {
             mode_create: false,
@@ -105,7 +120,17 @@ impl HostForm {
         };
         let user = empty_to_none(&self.fields[2]);
         let cmd = empty_to_none(&self.fields[4]);
-        let command = empty_to_none(&self.fields[5]).map(ConnectCommand::Program);
+        let program = empty_to_none(&self.fields[5]);
+        let args: Vec<String> = self.fields[6]
+            .split_whitespace()
+            .map(str::to_string)
+            .collect();
+        let command = match (program, args.is_empty()) {
+            (Some(program), true) => Some(ConnectCommand::Program(program)),
+            (Some(program), false) => Some(ConnectCommand::Template { program, args }),
+            (None, true) => None,
+            (None, false) => return Err("Args require a program".into()),
+        };
 
         Ok(Host {
             name: name.into(),
@@ -399,6 +424,61 @@ mod tests {
         state.defaults_inputs[3] = "  wt  ".into();
         state.apply_defaults(&mut config).unwrap();
         assert_eq!(config.defaults.terminal_command.as_deref(), Some("wt"));
+    }
+
+    #[test]
+    fn host_form_round_trips_template_command() {
+        let host = Host {
+            name: "edge".into(),
+            ip: "10.0.0.5".into(),
+            user: Some("ops".into()),
+            port: Some(2222),
+            cmd: None,
+            command: Some(ConnectCommand::Template {
+                program: "kitty".into(),
+                args: vec![
+                    "+kitten".into(),
+                    "ssh".into(),
+                    "-p".into(),
+                    "{port}".into(),
+                    "{user}@{host}".into(),
+                ],
+            }),
+        };
+        let form = HostForm::new_edit(0, 0, &host);
+        assert_eq!(form.fields[5], "kitty");
+        assert_eq!(form.fields[6], "+kitten ssh -p {port} {user}@{host}");
+        let round_tripped = form.to_host().expect("template round-trip");
+        assert_eq!(round_tripped, host);
+    }
+
+    #[test]
+    fn host_form_round_trips_program_only_command() {
+        let host = Host {
+            name: "edge".into(),
+            ip: "10.0.0.5".into(),
+            user: Some("ops".into()),
+            port: Some(22),
+            cmd: None,
+            command: Some(ConnectCommand::Program("mosh".into())),
+        };
+        let form = HostForm::new_edit(0, 0, &host);
+        assert_eq!(form.fields[5], "mosh");
+        assert!(form.fields[6].is_empty());
+        let round_tripped = form.to_host().expect("program round-trip");
+        assert_eq!(round_tripped, host);
+    }
+
+    #[test]
+    fn host_form_rejects_args_without_program() {
+        let mut form = HostForm::new_create(0);
+        form.fields[0] = "edge".into();
+        form.fields[1] = "10.0.0.5".into();
+        form.fields[6] = "--foo".into();
+        let err = form
+            .to_host()
+            .expect_err("args without program should fail");
+        assert!(err.contains("program"), "unexpected error: {err}");
     }
 
     #[test]

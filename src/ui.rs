@@ -756,14 +756,16 @@ fn draw_hosts_editor(
 }
 
 fn draw_host_form(frame: &mut Frame<'_>, form: &HostForm, theme: &Theme, area: Rect) {
+    let mut constraints: Vec<Constraint> = HostForm::LABELS
+        .iter()
+        .map(|_| Constraint::Length(3))
+        .collect();
+    // Args row gets a one-line hint underneath so the placeholder vocabulary
+    // is discoverable without leaving the TUI.
+    constraints.push(Constraint::Length(1));
     let chunks = Layout::default()
         .direction(Direction::Vertical)
-        .constraints(
-            HostForm::LABELS
-                .iter()
-                .map(|_| Constraint::Length(3))
-                .collect::<Vec<_>>(),
-        )
+        .constraints(constraints)
         .split(area);
     for (i, label) in HostForm::LABELS.iter().enumerate() {
         let active = form.focused == i;
@@ -792,6 +794,14 @@ fn draw_host_form(frame: &mut Frame<'_>, form: &HostForm, theme: &Theme, area: R
         )
         .style(Style::default().bg(theme.surface));
         frame.render_widget(para, chunks[i]);
+    }
+    if let Some(hint_area) = chunks.get(HostForm::LABELS.len()) {
+        let hint = Paragraph::new(Line::from(Span::styled(
+            HostForm::ARGS_HINT,
+            Style::default().fg(theme.text_muted),
+        )))
+        .style(Style::default().bg(theme.surface));
+        frame.render_widget(hint, *hint_area);
     }
 }
 

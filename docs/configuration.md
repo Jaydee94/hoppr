@@ -141,7 +141,7 @@ For `mosh`, `autossh`, `telnet`, and any other shorthand program, hoppr never wr
 ## Editing
 
 - **Hand-edit** the YAML in any editor. `hoppr config edit` opens `$EDITOR`.
-- **In-TUI** via the settings menu (`e` from the main screen). Categories, hosts and global defaults all editable; save with `s`.
+- **In-TUI** via the settings menu (`e` from the main screen). Categories, hosts and global defaults all editable; save with `s`. The host form exposes both the `Program` and `Args` fields, so structured `Template` commands can be authored without dropping to YAML.
 - **Central repo** via `hoppr sync push` — only `categories` are pushed to the shared inventory; `defaults` and the `sync` stanza stay on the local machine. See [`docs/sync.md`](sync.md).
 
 `serde_yaml` does not preserve comments — keep narrative documentation in a separate `README.md` inside your config repo if you want it.
