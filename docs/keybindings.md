@@ -14,7 +14,7 @@
 | `Enter`              | When in Hosts: connect. When in Search: confirm and return. |
 | `t`                  | Open connection in a new terminal tab (if detected).        |
 | `f`                  | Toggle star / favorite on the selected host.                |
-| `Ctrl+A`             | Toggle global search (all categories vs. current only).     |
+| `Ctrl+A`             | Search all (toggle global vs. current category)             |
 | `e`                  | Open the in-TUI settings menu                               |
 | `Backspace`          | When in Search: delete a character                          |
 | `Ctrl+U`             | When in Search: clear the query (stays in search focus)     |

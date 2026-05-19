@@ -459,8 +459,8 @@ fn draw_hints(frame: &mut Frame<'_>, app: &App, theme: &Theme, area: Rect) {
     let hints: Vec<(&str, &str)> = match app.mode {
         Mode::Browse => {
             let mut h = vec![("Tab", "Focus"), ("/", "Search")];
-            if app.focus == Focus::Search {
-                h.push(("⌃A", "All cats"));
+            if app.focus == Focus::Search || !app.search_query.is_empty() {
+                h.push(("⌃A", "Search all"));
             }
             h.push(("e", "Settings"));
             h.push(("f", "Star"));
