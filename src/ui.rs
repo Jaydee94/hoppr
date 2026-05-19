@@ -487,23 +487,37 @@ fn draw_hints(frame: &mut Frame<'_>, app: &App, theme: &Theme, area: Rect) {
                     Some(EditorView::Menu) => {
                         vec![("↑↓", "Move"), ("↩", "Select"), ("Esc", "Exit")]
                     }
-                    Some(EditorView::Categories) => vec![
-                        ("↑↓", "Move"),
-                        ("↩", "Edit"),
-                        ("a", "Add"),
-                        ("d", "Delete"),
-                        ("⌃s", "Save"),
-                        ("Esc", "Back"),
-                    ],
-                    Some(EditorView::Hosts) => vec![
-                        ("↑↓", "Move"),
-                        ("Tab/⇧Tab", "± category"),
-                        ("↩", "Edit"),
-                        ("a", "Add"),
-                        ("d", "Delete"),
-                        ("⌃s", "Save"),
-                        ("Esc", "Back"),
-                    ],
+                    Some(EditorView::Categories) => {
+                        if app.editor.as_ref().map(|e| e.filter_focus).unwrap_or(false) {
+                            vec![("Esc", "Close"), ("↩", "Confirm")]
+                        } else {
+                            vec![
+                                ("↑↓", "Move"),
+                                ("↩", "Edit"),
+                                ("a", "Add"),
+                                ("d", "Delete"),
+                                ("/", "Filter"),
+                                ("⌃s", "Save"),
+                                ("Esc", "Back"),
+                            ]
+                        }
+                    }
+                    Some(EditorView::Hosts) => {
+                        if app.editor.as_ref().map(|e| e.filter_focus).unwrap_or(false) {
+                            vec![("Esc", "Close"), ("↩", "Confirm")]
+                        } else {
+                            vec![
+                                ("↑↓", "Move"),
+                                ("Tab/⇧Tab", "± category"),
+                                ("↩", "Edit"),
+                                ("a", "Add"),
+                                ("d", "Delete"),
+                                ("/", "Filter"),
+                                ("⌃s", "Save"),
+                                ("Esc", "Back"),
+                            ]
+                        }
+                    }
                     Some(EditorView::CategoryForm) | Some(EditorView::HostForm) => {
                         vec![("↑↓", "Move"), ("↩", "Confirm"), ("Esc", "Cancel")]
                     }
@@ -799,13 +813,19 @@ fn draw_categories_editor(
     theme: &Theme,
     area: Rect,
 ) {
-    let items: Vec<ListItem> = app
-        .config
-        .categories
+    let (filter_area, list_area) = split_filter_area(editor.category_filter.as_deref(), area);
+
+    if let Some(filter) = editor.category_filter.as_deref() {
+        if let Some(filter_area) = filter_area {
+            draw_filter_input(frame, filter, editor.filter_focus, theme, filter_area);
+        }
+    }
+
+    let visible = editor.visible_categories(&app.config);
+    let items: Vec<ListItem> = visible
         .iter()
-        .enumerate()
         .map(|(i, c)| {
-            let selected = i == editor.categories_index;
+            let selected = *i == editor.categories_index;
             let prefix = if selected {
                 ACTIVE_GLYPH
             } else {
@@ -831,7 +851,7 @@ fn draw_categories_editor(
                 .style(Style::default().bg(theme.surface)),
         )
         .style(Style::default().bg(theme.surface));
-    frame.render_widget(list, area);
+    frame.render_widget(list, list_area);
 }
 
 fn draw_hosts_editor(
@@ -841,14 +861,21 @@ fn draw_hosts_editor(
     theme: &Theme,
     area: Rect,
 ) {
+    let (filter_area, list_area) = split_filter_area(editor.host_filter.as_deref(), area);
+
+    if let Some(filter) = editor.host_filter.as_deref() {
+        if let Some(filter_area) = filter_area {
+            draw_filter_input(frame, filter, editor.filter_focus, theme, filter_area);
+        }
+    }
+
     let cat = app.config.categories.get(editor.categories_index);
     let items: Vec<ListItem> = match cat {
-        Some(c) => c
-            .hosts
+        Some(_) => editor
+            .visible_hosts(&app.config)
             .iter()
-            .enumerate()
             .map(|(i, host)| {
-                let selected = i == editor.hosts_index;
+                let selected = *i == editor.hosts_index;
                 let prefix = if selected {
                     ACTIVE_GLYPH
                 } else {
@@ -874,7 +901,33 @@ fn draw_hosts_editor(
                 .style(Style::default().bg(theme.surface)),
         )
         .style(Style::default().bg(theme.surface));
-    frame.render_widget(list, area);
+    frame.render_widget(list, list_area);
+}
+
+/// Split the editor list area into an optional 1-line filter row and the
+/// remaining list region. When no filter is active the full area is
+/// returned for the list.
+fn split_filter_area(filter: Option<&str>, area: Rect) -> (Option<Rect>, Rect) {
+    if filter.is_none() {
+        return (None, area);
+    }
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Length(1), Constraint::Min(1)])
+        .split(area);
+    (Some(chunks[0]), chunks[1])
+}
+
+fn draw_filter_input(frame: &mut Frame<'_>, query: &str, focus: bool, theme: &Theme, area: Rect) {
+    let mut spans = vec![
+        Span::styled("🔍 ", Style::default().fg(theme.accent)),
+        Span::styled(query.to_string(), Style::default().fg(theme.text)),
+    ];
+    if focus {
+        spans.push(Span::styled("▌", Style::default().fg(theme.accent)));
+    }
+    let para = Paragraph::new(Line::from(spans)).style(Style::default().bg(theme.surface));
+    frame.render_widget(para, area);
 }
 
 fn draw_host_form(frame: &mut Frame<'_>, form: &HostForm, theme: &Theme, area: Rect) {

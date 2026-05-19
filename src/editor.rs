@@ -273,6 +273,9 @@ pub struct EditorState {
     /// prompt instead of silently writing the config to disk.
     pub pending_exit: bool,
     pub pending_delete: Option<PendingDelete>,
+    pub category_filter: Option<String>,
+    pub host_filter: Option<String>,
+    pub filter_focus: bool,
 }
 
 /// Layout of the sync editor.
@@ -336,6 +339,9 @@ impl EditorState {
             flash: None,
             pending_exit: false,
             pending_delete: None,
+            category_filter: None,
+            host_filter: None,
+            filter_focus: false,
         }
     }
 
@@ -407,6 +413,50 @@ impl EditorState {
                 self.hosts_index.min(hosts.len() - 1)
             };
         }
+    }
+
+    /// Categories paired with their original index, filtered by the
+    /// current `category_filter`. The original index is what callers
+    /// must use when mutating `config.categories` so that deletes and
+    /// edits land on the right entry — never the visible offset.
+    pub fn visible_categories<'a>(&self, config: &'a Config) -> Vec<(usize, &'a Category)> {
+        let needle = self
+            .category_filter
+            .as_deref()
+            .map(str::trim)
+            .filter(|q| !q.is_empty())
+            .map(str::to_lowercase);
+        config
+            .categories
+            .iter()
+            .enumerate()
+            .filter(|(_, cat)| match needle.as_deref() {
+                Some(q) => cat.name.to_lowercase().contains(q),
+                None => true,
+            })
+            .collect()
+    }
+
+    /// Hosts of the currently selected category paired with their
+    /// original index, filtered by the current `host_filter`.
+    pub fn visible_hosts<'a>(&self, config: &'a Config) -> Vec<(usize, &'a Host)> {
+        let Some(cat) = config.categories.get(self.categories_index) else {
+            return Vec::new();
+        };
+        let needle = self
+            .host_filter
+            .as_deref()
+            .map(str::trim)
+            .filter(|q| !q.is_empty())
+            .map(str::to_lowercase);
+        cat.hosts
+            .iter()
+            .enumerate()
+            .filter(|(_, host)| match needle.as_deref() {
+                Some(q) => host.name.to_lowercase().contains(q),
+                None => true,
+            })
+            .collect()
     }
 
     pub fn apply_defaults(&mut self, config: &mut Config) -> Result<(), String> {
@@ -631,6 +681,101 @@ mod tests {
         form.fields[0] = "ops".into();
         assert_eq!(form.field_error(0), None);
         assert_eq!(form.field_error(1), None);
+    }
+
+    fn config_with(categories: Vec<(&str, Vec<&str>)>) -> Config {
+        Config {
+            defaults: Default::default(),
+            sync: None,
+            categories: categories
+                .into_iter()
+                .map(|(name, hosts)| Category {
+                    name: name.into(),
+                    icon: None,
+                    hosts: hosts
+                        .into_iter()
+                        .map(|h| Host {
+                            name: h.into(),
+                            ip: "10.0.0.1".into(),
+                            user: None,
+                            port: None,
+                            cmd: None,
+                            command: None,
+                        })
+                        .collect(),
+                })
+                .collect(),
+        }
+    }
+
+    #[test]
+    fn visible_categories_unfiltered_returns_everything_with_indices() {
+        let config = config_with(vec![("Ops", vec![]), ("Home", vec![]), ("Cloud", vec![])]);
+        let state = EditorState::from_config(&config);
+        let visible = state.visible_categories(&config);
+        assert_eq!(visible.len(), 3);
+        assert_eq!(visible[0].0, 0);
+        assert_eq!(visible[1].0, 1);
+        assert_eq!(visible[2].0, 2);
+        assert_eq!(visible[0].1.name, "Ops");
+    }
+
+    #[test]
+    fn visible_categories_filters_case_insensitive() {
+        let config = config_with(vec![
+            ("Ops", vec![]),
+            ("Home Lab", vec![]),
+            ("Cloud", vec![]),
+        ]);
+        let mut state = EditorState::from_config(&config);
+        state.category_filter = Some("home".into());
+        let visible = state.visible_categories(&config);
+        assert_eq!(visible.len(), 1);
+        assert_eq!(visible[0].0, 1);
+        assert_eq!(visible[0].1.name, "Home Lab");
+    }
+
+    #[test]
+    fn visible_categories_treats_empty_filter_as_no_op() {
+        let config = config_with(vec![("Ops", vec![]), ("Home", vec![])]);
+        let mut state = EditorState::from_config(&config);
+        state.category_filter = Some(String::new());
+        assert_eq!(state.visible_categories(&config).len(), 2);
+        state.category_filter = Some("   ".into());
+        assert_eq!(state.visible_categories(&config).len(), 2);
+    }
+
+    #[test]
+    fn visible_hosts_filters_current_category_only() {
+        let config = config_with(vec![
+            ("Ops", vec!["web", "db", "cache"]),
+            ("Home", vec!["web-home"]),
+        ]);
+        let mut state = EditorState::from_config(&config);
+        state.categories_index = 0;
+        state.host_filter = Some("DB".into());
+        let visible = state.visible_hosts(&config);
+        assert_eq!(visible.len(), 1);
+        assert_eq!(visible[0].0, 1);
+        assert_eq!(visible[0].1.name, "db");
+    }
+
+    #[test]
+    fn visible_hosts_unfiltered_preserves_original_indices() {
+        let config = config_with(vec![("Ops", vec!["a", "b", "c"])]);
+        let state = EditorState::from_config(&config);
+        let visible = state.visible_hosts(&config);
+        assert_eq!(
+            visible.iter().map(|(i, _)| *i).collect::<Vec<_>>(),
+            vec![0, 1, 2]
+        );
+    }
+
+    #[test]
+    fn visible_hosts_returns_empty_for_missing_category() {
+        let config = config_with(vec![]);
+        let state = EditorState::from_config(&config);
+        assert!(state.visible_hosts(&config).is_empty());
     }
 
     #[test]

@@ -386,6 +386,96 @@ fn ssh_spawn(app: &mut App) -> Result<()> {
     Ok(())
 }
 
+/// Move the categories selection by `delta` steps over the *visible*
+/// (filtered) subset, then remap the resulting position back to the
+/// original `categories_index`. Without the remap a delete/edit would
+/// target the wrong row whenever a filter is active.
+fn move_visible_category(editor: &mut EditorState, config: &Config, delta: i32) {
+    let visible = editor.visible_categories(config);
+    if visible.is_empty() {
+        return;
+    }
+    let current_pos = visible
+        .iter()
+        .position(|(i, _)| *i == editor.categories_index)
+        .unwrap_or(0);
+    let len = visible.len() as i32;
+    let next = ((current_pos as i32 + delta).rem_euclid(len)) as usize;
+    editor.categories_index = visible[next].0;
+}
+
+/// Same as `move_visible_category` but for hosts inside the currently
+/// selected category.
+fn move_visible_host(editor: &mut EditorState, config: &Config, delta: i32) {
+    let visible = editor.visible_hosts(config);
+    if visible.is_empty() {
+        return;
+    }
+    let current_pos = visible
+        .iter()
+        .position(|(i, _)| *i == editor.hosts_index)
+        .unwrap_or(0);
+    let len = visible.len() as i32;
+    let next = ((current_pos as i32 + delta).rem_euclid(len)) as usize;
+    editor.hosts_index = visible[next].0;
+}
+
+fn handle_category_filter_input(editor: &mut EditorState, config: &Config, code: KeyCode) {
+    match code {
+        KeyCode::Esc => {
+            editor.filter_focus = false;
+        }
+        KeyCode::Enter => {
+            editor.filter_focus = false;
+            if let Some((first_index, _)) = editor.visible_categories(config).first() {
+                editor.categories_index = *first_index;
+            }
+        }
+        KeyCode::Backspace => {
+            if let Some(buf) = editor.category_filter.as_mut() {
+                buf.pop();
+            }
+        }
+        KeyCode::Char(c) => {
+            editor
+                .category_filter
+                .get_or_insert_with(String::new)
+                .push(c);
+            // Keep the highlight on something visible while the query narrows.
+            if let Some((first_index, _)) = editor.visible_categories(config).first() {
+                editor.categories_index = *first_index;
+            }
+        }
+        _ => {}
+    }
+}
+
+fn handle_host_filter_input(editor: &mut EditorState, config: &Config, code: KeyCode) {
+    match code {
+        KeyCode::Esc => {
+            editor.filter_focus = false;
+        }
+        KeyCode::Enter => {
+            editor.filter_focus = false;
+            if let Some((first_index, _)) = editor.visible_hosts(config).first() {
+                editor.hosts_index = *first_index;
+            }
+        }
+        KeyCode::Backspace => {
+            if let Some(buf) = editor.host_filter.as_mut() {
+                buf.pop();
+            }
+        }
+        KeyCode::Char(c) => {
+            editor.host_filter.get_or_insert_with(String::new).push(c);
+            if let Some((first_index, _)) = editor.visible_hosts(config).first() {
+                editor.hosts_index = *first_index;
+            }
+        }
+        _ => {}
+    }
+}
+
 // Returns Ok(true) when the caller should quit.
 fn handle_editor_event(app: &mut App, code: KeyCode, ctrl: bool) -> Result<bool> {
     if ctrl && matches!(code, KeyCode::Char('c')) {
@@ -467,105 +557,131 @@ fn handle_editor_event(app: &mut App, code: KeyCode, ctrl: bool) -> Result<bool>
             KeyCode::Char('s') if ctrl && editor.dirty => save_config(app)?,
             _ => {}
         },
-        EditorView::Categories => match code {
-            KeyCode::Esc => editor.view = EditorView::Menu,
-            KeyCode::Up | KeyCode::Char('k') => {
-                let len = app.config.categories.len().max(1);
-                editor.categories_index = (editor.categories_index + len - 1) % len;
-            }
-            KeyCode::Down | KeyCode::Char('j') => {
-                let len = app.config.categories.len().max(1);
-                editor.categories_index = (editor.categories_index + 1) % len;
-            }
-            KeyCode::Char('a') => {
-                editor.category_form = Some(CategoryForm::new_create());
-                editor.view = EditorView::CategoryForm;
-            }
-            KeyCode::Char('r') | KeyCode::Enter => {
-                if let Some(cat) = app.config.categories.get(editor.categories_index) {
-                    editor.category_form =
-                        Some(CategoryForm::new_edit(editor.categories_index, cat));
-                    editor.view = EditorView::CategoryForm;
-                }
-            }
-            KeyCode::Char('d') if !app.config.categories.is_empty() => {
-                if let Some(cat) = app.config.categories.get(editor.categories_index) {
-                    editor.request_delete(PendingDelete::Category {
-                        name: cat.name.clone(),
-                    });
-                }
-            }
-            KeyCode::Char('s') if ctrl && editor.dirty => save_config(app)?,
-            _ => {}
-        },
-        EditorView::Hosts => match code {
-            KeyCode::Esc => editor.view = EditorView::Menu,
-            KeyCode::Tab => {
-                let len = app.config.categories.len();
-                if len > 0 {
-                    editor.categories_index = (editor.categories_index + 1) % len;
-                    editor.hosts_index = 0;
-                }
-            }
-            KeyCode::BackTab => {
-                let len = app.config.categories.len();
-                if len > 0 {
-                    editor.categories_index = (editor.categories_index + len - 1) % len;
-                    editor.hosts_index = 0;
-                }
-            }
-            KeyCode::Up | KeyCode::Char('k') => {
-                let len = app
-                    .config
-                    .categories
-                    .get(editor.categories_index)
-                    .map(|c| c.hosts.len())
-                    .unwrap_or(0)
-                    .max(1);
-                editor.hosts_index = (editor.hosts_index + len - 1) % len;
-            }
-            KeyCode::Down | KeyCode::Char('j') => {
-                let len = app
-                    .config
-                    .categories
-                    .get(editor.categories_index)
-                    .map(|c| c.hosts.len())
-                    .unwrap_or(0)
-                    .max(1);
-                editor.hosts_index = (editor.hosts_index + 1) % len;
-            }
-            KeyCode::Char('a') if !app.config.categories.is_empty() => {
-                editor.host_form = Some(HostForm::new_create(editor.categories_index));
-                editor.view = EditorView::HostForm;
-            }
-            KeyCode::Char('r') | KeyCode::Enter => {
-                if let Some(host) = app
-                    .config
-                    .categories
-                    .get(editor.categories_index)
-                    .and_then(|c| c.hosts.get(editor.hosts_index))
-                {
-                    editor.host_form = Some(HostForm::new_edit(
-                        editor.categories_index,
-                        editor.hosts_index,
-                        host,
-                    ));
-                    editor.view = EditorView::HostForm;
-                }
-            }
-            KeyCode::Char('d') => {
-                if let Some(cat) = app.config.categories.get(editor.categories_index) {
-                    if let Some(host) = cat.hosts.get(editor.hosts_index) {
-                        editor.request_delete(PendingDelete::Host {
-                            category_name: cat.name.clone(),
-                            host_name: host.name.clone(),
-                        });
+        EditorView::Categories => {
+            if editor.filter_focus {
+                handle_category_filter_input(editor, &app.config, code);
+            } else {
+                match code {
+                    KeyCode::Esc => {
+                        // Second Esc on a non-focused, populated filter clears it,
+                        // freeing the user from a hidden narrowing they can't see.
+                        if editor.category_filter.is_some() {
+                            editor.category_filter = None;
+                        } else {
+                            editor.view = EditorView::Menu;
+                        }
                     }
+                    KeyCode::Char('/') => {
+                        editor.filter_focus = true;
+                        if editor.category_filter.is_none() {
+                            editor.category_filter = Some(String::new());
+                        }
+                    }
+                    KeyCode::Up | KeyCode::Char('k') => {
+                        move_visible_category(editor, &app.config, -1);
+                    }
+                    KeyCode::Down | KeyCode::Char('j') => {
+                        move_visible_category(editor, &app.config, 1);
+                    }
+                    KeyCode::Char('a') => {
+                        editor.category_form = Some(CategoryForm::new_create());
+                        editor.view = EditorView::CategoryForm;
+                    }
+                    KeyCode::Char('r') | KeyCode::Enter => {
+                        if let Some(cat) = app.config.categories.get(editor.categories_index) {
+                            editor.category_form =
+                                Some(CategoryForm::new_edit(editor.categories_index, cat));
+                            editor.view = EditorView::CategoryForm;
+                        }
+                    }
+                    KeyCode::Char('d') if !app.config.categories.is_empty() => {
+                        if let Some(cat) = app.config.categories.get(editor.categories_index) {
+                            editor.request_delete(PendingDelete::Category {
+                                name: cat.name.clone(),
+                            });
+                        }
+                    }
+                    KeyCode::Char('s') if ctrl && editor.dirty => save_config(app)?,
+                    _ => {}
                 }
             }
-            KeyCode::Char('s') if ctrl && editor.dirty => save_config(app)?,
-            _ => {}
-        },
+        }
+        EditorView::Hosts => {
+            if editor.filter_focus {
+                handle_host_filter_input(editor, &app.config, code);
+            } else {
+                match code {
+                    KeyCode::Esc => {
+                        if editor.host_filter.is_some() {
+                            editor.host_filter = None;
+                        } else {
+                            editor.view = EditorView::Menu;
+                        }
+                    }
+                    KeyCode::Char('/') => {
+                        editor.filter_focus = true;
+                        if editor.host_filter.is_none() {
+                            editor.host_filter = Some(String::new());
+                        }
+                    }
+                    KeyCode::Tab => {
+                        let len = app.config.categories.len();
+                        if len > 0 {
+                            editor.categories_index = (editor.categories_index + 1) % len;
+                            editor.hosts_index = 0;
+                            // Filter is scoped to the visible category; switching
+                            // would otherwise leave a stale narrowing in place.
+                            editor.host_filter = None;
+                        }
+                    }
+                    KeyCode::BackTab => {
+                        let len = app.config.categories.len();
+                        if len > 0 {
+                            editor.categories_index = (editor.categories_index + len - 1) % len;
+                            editor.hosts_index = 0;
+                            editor.host_filter = None;
+                        }
+                    }
+                    KeyCode::Up | KeyCode::Char('k') => {
+                        move_visible_host(editor, &app.config, -1);
+                    }
+                    KeyCode::Down | KeyCode::Char('j') => {
+                        move_visible_host(editor, &app.config, 1);
+                    }
+                    KeyCode::Char('a') if !app.config.categories.is_empty() => {
+                        editor.host_form = Some(HostForm::new_create(editor.categories_index));
+                        editor.view = EditorView::HostForm;
+                    }
+                    KeyCode::Char('r') | KeyCode::Enter => {
+                        if let Some(host) = app
+                            .config
+                            .categories
+                            .get(editor.categories_index)
+                            .and_then(|c| c.hosts.get(editor.hosts_index))
+                        {
+                            editor.host_form = Some(HostForm::new_edit(
+                                editor.categories_index,
+                                editor.hosts_index,
+                                host,
+                            ));
+                            editor.view = EditorView::HostForm;
+                        }
+                    }
+                    KeyCode::Char('d') => {
+                        if let Some(cat) = app.config.categories.get(editor.categories_index) {
+                            if let Some(host) = cat.hosts.get(editor.hosts_index) {
+                                editor.request_delete(PendingDelete::Host {
+                                    category_name: cat.name.clone(),
+                                    host_name: host.name.clone(),
+                                });
+                            }
+                        }
+                    }
+                    KeyCode::Char('s') if ctrl && editor.dirty => save_config(app)?,
+                    _ => {}
+                }
+            }
+        }
         EditorView::CategoryForm => {
             let form_event_result = handle_category_form(editor, &mut app.config, code);
             if let Some(msg) = form_event_result {

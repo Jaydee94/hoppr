@@ -43,13 +43,28 @@ If the editor has unsaved changes when you press `Esc` on the settings menu, hop
 | `r`                  | Rename / edit the selected item                             |
 <<<<<<< HEAD
 | `d`                  | Delete the selected item (no undo)                          |
+<<<<<<< HEAD
 | `Ctrl+S`             | Save the config to disk (universal across all editor views) |
 =======
 | `d`                  | Request deletion of the selected item (prompts `y/n`)       |
 | `y` / `n`            | Confirm / cancel a pending delete prompt                    |
+=======
+| `/`                  | Filter the current list (Categories / Hosts) by name        |
+>>>>>>> e9330d4 (feat(editor): add filter to categories and hosts lists)
 | `s`                  | Save the config to disk (`Ctrl+S` inside form views)        |
 >>>>>>> 8d0e954 (feat(editor): confirm destructive deletes in editor)
 | `Esc`                | Back to the previous screen                                 |
+
+### Filter input (Categories / Hosts)
+
+`/` opens a single-line filter at the top of the list. While the filter is focused:
+
+| key                  | action                                                      |
+| -------------------- | ----------------------------------------------------------- |
+| typed characters     | Append to the query (case-insensitive `contains` on name)   |
+| `Backspace`          | Delete a character                                          |
+| `Enter`              | Close the input and move selection to the first match       |
+| `Esc`                | Close the input (the filter stays applied — press `Esc` again to clear it) |
 
 ### Settings menu
 
