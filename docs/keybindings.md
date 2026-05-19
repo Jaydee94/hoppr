@@ -34,7 +34,7 @@ Open with `e`. Esc returns to the previous screen.
 | key                  | action                                                      |
 | -------------------- | ----------------------------------------------------------- |
 | `↑↓ j k`             | Move within a list / between form fields                    |
-| `Tab` / `Shift+Tab`  | Next / previous form field                                  |
+| `Tab` / `Shift+Tab`  | Next / previous form field (in form views). In the Hosts view, cycles to the next / previous **category** — not the next panel. Use `↑↓` or `j`/`k` to move within the host list. |
 | `Enter`              | Open the selected item · submit the current form            |
 | `a`                  | Add a new category / host                                   |
 | `r`                  | Rename / edit the selected item                             |
@@ -52,7 +52,7 @@ Open with `e`. Esc returns to the previous screen.
 ```
 
 - **Manage categories** — list, add (`a`), rename (`r` / `Enter`), delete (`d`).
-- **Manage hosts** — `Tab` cycles between categories. Same `a/r/d` semantics.
+- **Manage hosts** — `Tab` / `Shift+Tab` cycle to the next / previous category. Use `↑↓` (or `j`/`k`) to move within the host list. Same `a/r/d` semantics.
 - **Connection defaults** — edit `defaults.command` (program), default port, default user.
 - **Central repo sync** — edit the `sync.*` block. Tab/↑↓ moves through the six form fields and the three action buttons underneath; `Space` toggles `auto-pull` / `auto-push`; `Enter` either applies the form (text fields), flips the toggle (booleans), or fires the button. `Ctrl+S` is a universal save shortcut.
 

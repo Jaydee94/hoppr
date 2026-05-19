@@ -483,7 +483,7 @@ fn draw_hints(frame: &mut Frame<'_>, app: &App, theme: &Theme, area: Rect) {
             ],
             Some(EditorView::Hosts) => vec![
                 ("↑↓", "Move"),
-                ("Tab", "Switch cat"),
+                ("Tab/⇧Tab", "± category"),
                 ("↩", "Edit"),
                 ("a", "Add"),
                 ("d", "Delete"),

@@ -440,6 +440,13 @@ fn handle_editor_event(app: &mut App, code: KeyCode, ctrl: bool) -> Result<bool>
                     editor.hosts_index = 0;
                 }
             }
+            KeyCode::BackTab => {
+                let len = app.config.categories.len();
+                if len > 0 {
+                    editor.categories_index = (editor.categories_index + len - 1) % len;
+                    editor.hosts_index = 0;
+                }
+            }
             KeyCode::Up | KeyCode::Char('k') => {
                 let len = app
                     .config
