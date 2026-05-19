@@ -130,14 +130,102 @@ fn draw_body(frame: &mut Frame<'_>, app: &mut App, theme: &Theme, area: Rect) {
     let mut categories_state = app.categories_state;
     let mut hosts_state = app.hosts_state;
 
-    let categories = build_categories(app, theme);
-    frame.render_stateful_widget(categories, split[0], &mut categories_state);
+    let categories_display = app.categories_for_display();
+    if categories_display.is_empty() {
+        let block = block("Categories", app.focus == Focus::Categories, theme);
+        let hint = empty_state_paragraph("No categories yet", "Press e → Manage categories", theme)
+            .block(block);
+        frame.render_widget(hint, split[0]);
+    } else {
+        let categories = build_categories(app, theme);
+        frame.render_stateful_widget(categories, split[0], &mut categories_state);
+    }
 
-    let hosts = build_hosts(app, theme);
-    frame.render_stateful_widget(hosts, split[1], &mut hosts_state);
+    let hosts = app.filtered_hosts();
+    if hosts.is_empty() {
+        let (title, headline, sub) = hosts_empty_state(app);
+        let hint = empty_state_paragraph(&headline, &sub, theme).block(block_owned(
+            title,
+            app.focus == Focus::Hosts,
+            theme,
+        ));
+        frame.render_widget(hint, split[1]);
+    } else {
+        let list = build_hosts(app, theme);
+        frame.render_stateful_widget(list, split[1], &mut hosts_state);
+    }
 
     app.categories_state = categories_state;
     app.hosts_state = hosts_state;
+}
+
+/// Choose the right empty-state copy for the hosts panel based on which
+/// virtual / real category is active and whether a search query is in play.
+/// Returns `(title, headline, subtext)`.
+fn hosts_empty_state(app: &App) -> (String, String, String) {
+    let query = app.search_query.trim();
+    if !query.is_empty() {
+        let title = if app.search_all {
+            "Hosts · All Categories".to_string()
+        } else {
+            match app.current_virtual_category() {
+                Some(VirtualCategoryKind::Recent) => "Hosts · Recent".to_string(),
+                Some(VirtualCategoryKind::Starred) => "Hosts · Starred".to_string(),
+                None => match app.current_category() {
+                    Some(cat) => format!("Hosts · {}", cat.name),
+                    None => "Hosts".to_string(),
+                },
+            }
+        };
+        return (
+            title,
+            format!("No hosts match \"{query}\""),
+            "Try Ctrl+A for global search.".to_string(),
+        );
+    }
+
+    match app.current_virtual_category() {
+        Some(VirtualCategoryKind::Recent) => (
+            "Hosts · Recent".to_string(),
+            "Recent is empty".to_string(),
+            "Connect to a host to populate Recent.".to_string(),
+        ),
+        Some(VirtualCategoryKind::Starred) => (
+            "Hosts · Starred".to_string(),
+            "No starred hosts yet".to_string(),
+            "Press f on a host to star it.".to_string(),
+        ),
+        None => {
+            let title = match app.current_category() {
+                Some(cat) => format!("Hosts · {}", cat.name),
+                None => "Hosts".to_string(),
+            };
+            (
+                title,
+                "No hosts in this category".to_string(),
+                "Press e → Manage hosts.".to_string(),
+            )
+        }
+    }
+}
+
+/// Two-line centered hint used inside the categories and hosts panels when
+/// there is nothing to list. Kept in `ui.rs` so the surrounding `Block` styling
+/// remains visually identical to the populated state.
+fn empty_state_paragraph<'a>(headline: &'a str, sub: &'a str, theme: &Theme) -> Paragraph<'a> {
+    Paragraph::new(vec![
+        Line::from(""),
+        Line::from(Span::styled(
+            headline,
+            Style::default()
+                .fg(theme.text_dim)
+                .add_modifier(Modifier::BOLD),
+        )),
+        Line::from(Span::styled(sub, Style::default().fg(theme.text_muted))),
+    ])
+    .alignment(Alignment::Center)
+    .style(theme.base())
+    .wrap(Wrap { trim: true })
 }
 
 fn build_categories<'a>(app: &'a App, theme: &Theme) -> List<'a> {
@@ -968,5 +1056,40 @@ mod tests {
             .collect::<String>();
         assert!(rendered.contains("Infrastructure"));
         assert!(rendered.contains("gateway"));
+    }
+
+    #[test]
+    fn draw_renders_empty_state_hints() {
+        let config = Config {
+            defaults: Default::default(),
+            sync: None,
+            categories: Vec::new(),
+        };
+        let mut app = App::new(
+            config,
+            PathBuf::from("/tmp/x.yaml"),
+            SyncStatus::Disabled,
+            HistoryStore::default(),
+            FavoritesStore::default(),
+            TerminalLauncher::detect(None),
+        );
+
+        let backend = TestBackend::new(120, 30);
+        let mut terminal = Terminal::new(backend).expect("terminal");
+
+        terminal
+            .draw(|frame| super::draw(frame, &mut app))
+            .expect("ui draw");
+
+        let buf = terminal.backend().buffer().clone();
+        let rendered = buf
+            .content()
+            .iter()
+            .map(|cell| cell.symbol())
+            .collect::<String>();
+        assert!(
+            rendered.contains("No categories yet"),
+            "expected categories empty-state hint, got: {rendered}"
+        );
     }
 }
