@@ -900,7 +900,8 @@ fn draw_sync_editor(frame: &mut Frame<'_>, editor: &EditorState, theme: &Theme, 
         .split(area);
     for (i, label) in labels.iter().enumerate() {
         let active = editor.sync_field == i;
-        let value_spans = if sync_field_is_bool(i) {
+        let is_bool = sync_field_is_bool(i);
+        let value_spans = if is_bool {
             toggle_spans(&editor.sync_inputs[i], theme)
         } else {
             vec![Span::styled(
@@ -913,14 +914,21 @@ fn draw_sync_editor(frame: &mut Frame<'_>, editor: &EditorState, theme: &Theme, 
             Style::default().fg(theme.text_dim),
         )];
         spans.extend(value_spans);
-        if active && !sync_field_is_bool(i) {
+        if active && !is_bool {
             spans.push(Span::styled("▌", Style::default().fg(theme.accent)));
         }
+        // Boolean toggles get a thick border when focused so the
+        // checkbox stands out from the text-input rows above.
+        let border_type = if active && is_bool {
+            BorderType::Thick
+        } else {
+            BorderType::Rounded
+        };
         let para = Paragraph::new(Line::from(spans))
             .block(
                 Block::default()
                     .borders(Borders::ALL)
-                    .border_type(BorderType::Rounded)
+                    .border_type(border_type)
                     .border_style(Style::default().fg(if active {
                         theme.primary
                     } else {
@@ -983,18 +991,18 @@ fn draw_sync_buttons(frame: &mut Frame<'_>, editor: &EditorState, theme: &Theme,
     }
 }
 
-/// Render a boolean field as `[●] On` / `[ ] Off`, with a faded "unset"
-/// state for fields the user hasn't touched yet.
+/// Render a boolean field as a checkbox: `[●] On` (set), `[○] Off`
+/// (explicitly off) or `[○] Off (default)` (untouched).
 fn toggle_spans(value: &str, theme: &Theme) -> Vec<Span<'static>> {
     let (mark, label, color) = match value.trim().to_lowercase().as_str() {
         "true" | "yes" | "y" | "1" | "on" => ("[●]", "On", theme.success),
-        "false" | "no" | "n" | "0" | "off" => ("[ ]", "Off", theme.text_dim),
-        _ => ("[ ]", "Off (default)", theme.text_muted),
+        "false" | "no" | "n" | "0" | "off" => ("[○]", "Off", theme.text_dim),
+        _ => ("[○]", "Off (default)", theme.text_muted),
     };
     vec![
         Span::styled(mark, Style::default().fg(color)),
         Span::raw(" "),
-        Span::styled(label.to_string(), Style::default().fg(theme.text)),
+        Span::styled(label.to_string(), Style::default().fg(color)),
         Span::styled("   space to toggle", Style::default().fg(theme.text_muted)),
     ]
 }
@@ -1008,6 +1016,7 @@ mod tests {
     use crate::{
         app::App,
         config::{Category, Config, Host},
+        editor::{EditorView, SYNC_AUTO_PULL, SYNC_AUTO_PUSH},
         favorites::FavoritesStore,
         history::HistoryStore,
         sync::SyncStatus,
@@ -1091,5 +1100,58 @@ mod tests {
             rendered.contains("No categories yet"),
             "expected categories empty-state hint, got: {rendered}"
         );
+    }
+
+    fn render_sync_editor(auto_pull: &str, auto_push: &str) -> String {
+        let config = Config {
+            defaults: Default::default(),
+            sync: None,
+            categories: vec![],
+        };
+        let mut app = App::new(
+            config,
+            PathBuf::from("/tmp/x.yaml"),
+            SyncStatus::Disabled,
+            HistoryStore::default(),
+            FavoritesStore::default(),
+            TerminalLauncher::detect(None),
+        );
+        app.enter_edit_mode();
+        let editor = app.editor.as_mut().expect("editor");
+        editor.view = EditorView::Sync;
+        editor.sync_inputs[SYNC_AUTO_PULL] = auto_pull.into();
+        editor.sync_inputs[SYNC_AUTO_PUSH] = auto_push.into();
+
+        let backend = TestBackend::new(120, 30);
+        let mut terminal = Terminal::new(backend).expect("terminal");
+        terminal
+            .draw(|frame| super::draw(frame, &mut app))
+            .expect("ui draw");
+
+        let buf = terminal.backend().buffer().clone();
+        buf.content()
+            .iter()
+            .map(|cell| cell.symbol())
+            .collect::<String>()
+    }
+
+    #[test]
+    fn sync_editor_renders_on_checkbox_glyph() {
+        let rendered = render_sync_editor("true", "true");
+        assert!(
+            rendered.contains('\u{25CF}'),
+            "expected filled checkbox glyph in: {rendered}"
+        );
+        assert!(rendered.contains("On"));
+    }
+
+    #[test]
+    fn sync_editor_renders_off_checkbox_glyph() {
+        let rendered = render_sync_editor("false", "false");
+        assert!(
+            rendered.contains('\u{25CB}'),
+            "expected empty checkbox glyph in: {rendered}"
+        );
+        assert!(rendered.contains("Off"));
     }
 }

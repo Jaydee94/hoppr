@@ -26,7 +26,7 @@ git operations use **libgit2** (vendored, with bundled libssh2 + OpenSSL). Both 
 
 ## First-time setup from the TUI
 
-Open settings with `e`, pick **Central repo sync**, fill in the Repo URL (and optionally branch / path / local clone path). Use `Space` to flip the `auto-pull` and `auto-push` toggles — no need to type `true`/`false` by hand.
+Open settings with `e`, pick **Central repo sync**, fill in the Repo URL (and optionally branch / path / local clone path). The `auto-pull` and `auto-push` rows render as checkboxes (`[●] On` / `[○] Off`); press `Space` (or `Enter`) on the focused row to flip them — no need to type `true`/`false` by hand.
 
 Three action buttons sit underneath the form. Tab/↑↓ moves focus through them; `Enter` activates the focused button.
 
