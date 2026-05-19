@@ -13,3 +13,6 @@ node_modules
 # logs / local state
 *.log
 .hoppr/
+
+# Claude Code agent worktrees
+.claude/
