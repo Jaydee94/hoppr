@@ -257,6 +257,10 @@ pub struct EditorState {
     pub sync_inputs: [String; 6], // repo, branch, path, local, auto_pull, auto_push
     pub dirty: bool,
     pub flash: Option<String>,
+    /// Set when the user pressed Esc on the menu while `dirty` was true.
+    /// While true, the event handler short-circuits to a save/discard/cancel
+    /// prompt instead of silently writing the config to disk.
+    pub pending_exit: bool,
 }
 
 /// Layout of the sync editor.
@@ -318,6 +322,7 @@ impl EditorState {
             sync_inputs,
             dirty: false,
             flash: None,
+            pending_exit: false,
         }
     }
 
@@ -562,6 +567,17 @@ mod tests {
         form.fields[0] = "ops".into();
         assert_eq!(form.field_error(0), None);
         assert_eq!(form.field_error(1), None);
+    }
+
+    #[test]
+    fn pending_exit_toggle_preserves_dirty() {
+        let mut state = EditorState::from_config(&Config::default());
+        state.dirty = true;
+        assert!(!state.pending_exit);
+        state.pending_exit = true;
+        assert!(state.dirty, "raising pending_exit must not clear dirty");
+        state.pending_exit = false;
+        assert!(state.dirty, "lowering pending_exit must not clear dirty");
     }
 
     #[test]

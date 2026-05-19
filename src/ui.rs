@@ -620,24 +620,76 @@ fn draw_editor(frame: &mut Frame<'_>, app: &App, theme: &Theme, area: Rect) {
         EditorView::Sync => draw_sync_editor(frame, editor, theme, split[0]),
     }
 
-    let flash = editor.flash.clone().unwrap_or_else(|| {
-        if editor.dirty {
-            "Unsaved changes — press s to save".to_string()
-        } else {
-            "Saved".to_string()
-        }
-    });
-    let footer_color = if editor.dirty {
-        theme.warning
+    let footer_line = if editor.pending_exit {
+        Line::from(vec![
+            Span::styled("● ", Style::default().fg(theme.warning)),
+            Span::styled(
+                "[s] Save  ·  [d] Discard  ·  [c] Cancel",
+                Style::default().fg(theme.text_dim),
+            ),
+        ])
     } else {
-        theme.success
+        let flash = editor.flash.clone().unwrap_or_else(|| {
+            if editor.dirty {
+                "Unsaved changes — press s to save".to_string()
+            } else {
+                "Saved".to_string()
+            }
+        });
+        let footer_color = if editor.dirty {
+            theme.warning
+        } else {
+            theme.success
+        };
+        Line::from(vec![
+            Span::styled("● ", Style::default().fg(footer_color)),
+            Span::styled(flash, Style::default().fg(theme.text_dim)),
+        ])
     };
-    let footer = Paragraph::new(Line::from(vec![
-        Span::styled("● ", Style::default().fg(footer_color)),
-        Span::styled(flash, Style::default().fg(theme.text_dim)),
-    ]))
-    .style(Style::default().bg(theme.surface));
+    let footer = Paragraph::new(footer_line).style(Style::default().bg(theme.surface));
     frame.render_widget(footer, split[1]);
+
+    if editor.pending_exit {
+        draw_pending_exit_modal(frame, theme, area);
+    }
+}
+
+fn draw_pending_exit_modal(frame: &mut Frame<'_>, theme: &Theme, area: Rect) {
+    let modal = centered_rect(40, 30, area);
+    frame.render_widget(Clear, modal);
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_type(BorderType::Thick)
+        .border_style(Style::default().fg(theme.warning).bg(theme.surface))
+        .style(Style::default().bg(theme.surface));
+    frame.render_widget(block, modal);
+
+    let inner = modal.inner(Margin {
+        horizontal: 2,
+        vertical: 1,
+    });
+    let lines = vec![
+        Line::from(Span::styled(
+            "Unsaved changes",
+            Style::default()
+                .fg(theme.warning)
+                .add_modifier(Modifier::BOLD),
+        )),
+        Line::from(""),
+        Line::from(Span::styled(
+            "Save / Discard / Cancel",
+            Style::default().fg(theme.text),
+        )),
+        Line::from(""),
+        Line::from(Span::styled(
+            "[s] save · [d] discard · [c] cancel",
+            Style::default().fg(theme.text_muted),
+        )),
+    ];
+    let body = Paragraph::new(lines)
+        .alignment(Alignment::Center)
+        .style(Style::default().bg(theme.surface));
+    frame.render_widget(body, inner);
 }
 
 fn draw_menu(frame: &mut Frame<'_>, editor: &EditorState, theme: &Theme, area: Rect) {

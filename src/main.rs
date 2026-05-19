@@ -395,13 +395,42 @@ fn handle_editor_event(app: &mut App, code: KeyCode, ctrl: bool) -> Result<bool>
     let editor = app.editor.as_mut().expect("editor state in edit mode");
     editor.clamp(&app.config);
 
+    // The unsaved-changes prompt owns the whole event loop until the user
+    // resolves it — otherwise navigation keys could nudge the editor while
+    // the modal is on screen.
+    if editor.pending_exit {
+        match code {
+            KeyCode::Char('s') => {
+                save_config(app)?;
+                app.exit_edit_mode();
+            }
+            KeyCode::Char('d') => {
+                // If the config has never been saved, reload fails and we
+                // simply drop the in-memory edits via exit_edit_mode below.
+                if let Ok(cfg) = Config::load_from_path(&app.config_path) {
+                    app.config = cfg;
+                }
+                if let Some(editor) = app.editor.as_mut() {
+                    editor.dirty = false;
+                }
+                app.exit_edit_mode();
+            }
+            KeyCode::Char('c') | KeyCode::Esc => {
+                editor.pending_exit = false;
+            }
+            _ => {}
+        }
+        return Ok(false);
+    }
+
     match editor.view {
         EditorView::Menu => match code {
             KeyCode::Esc => {
-                if app.editor.as_ref().map(|e| e.dirty).unwrap_or(false) {
-                    save_config(app)?;
+                if editor.dirty {
+                    editor.pending_exit = true;
+                } else {
+                    app.exit_edit_mode();
                 }
-                app.exit_edit_mode();
             }
             KeyCode::Up | KeyCode::Char('k') => {
                 editor.menu_index = (editor.menu_index + MENU_ITEMS.len() - 1) % MENU_ITEMS.len();

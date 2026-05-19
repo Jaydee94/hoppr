@@ -32,6 +32,8 @@ Both virtual categories support the normal search query and vim navigation.
 
 Open with `e`. Esc returns to the previous screen.
 
+If the editor has unsaved changes when you press `Esc` on the settings menu, hoppr shows an **unsaved changes prompt** instead of silently writing the config. Choose `[s]` to save and exit, `[d]` to discard your edits (reloads the file from disk), or `[c]` (or `Esc`) to cancel and stay in the editor.
+
 | key                  | action                                                      |
 | -------------------- | ----------------------------------------------------------- |
 | `↑↓ j k`             | Move within a list / between form fields                    |
