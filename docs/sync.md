@@ -102,6 +102,19 @@ hoppr --no-sync                      # bypass auto-pull for one launch
 hoppr --sync ls                      # opt-in to a sync even with auto_pull: false
 ```
 
+## Status chip glyphs
+
+The sync chip in the footer encodes its state with a glyph **and** a colour, so it stays readable for colourblind users:
+
+| glyph        | colour  | meaning                                                    |
+| ------------ | ------- | ---------------------------------------------------------- |
+| `⊘ sync off` | muted   | `sync.repo` is unset — no sync configured.                 |
+| `⊘ sync skipped` | muted | `auto_pull: false` (or `--no-sync`) bypassed the pull.    |
+| `✕ sync error` | red    | The pull or push attempt failed; check the status line.    |
+| `✓ synced`   | green   | Pull succeeded; the local clone is at the remote tip.      |
+| `↻ synced`   | accent  | Pull pulled new commits that changed the inventory.        |
+| `! unpushed` | warning | Suffix added when local commits have not been pushed yet.  |
+
 ## Safety
 
 - Pulls are **fast-forward only**. If the remote and local have diverged, hoppr refuses to merge — resolve it by hand in the clone directory and try again.

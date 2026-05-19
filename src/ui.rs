@@ -368,36 +368,39 @@ fn draw_status(frame: &mut Frame<'_>, app: &App, theme: &Theme, area: Rect) {
 }
 
 /// Compose the left-hand sync chip:
-/// `● <state> [ · unpushed]` where `<state>` is either a fixed label
-/// (off / failed / …) or a relative timestamp once we've synced at
-/// least once in this session.
+/// `<glyph> <state> [ · ! unpushed]` where `<state>` is either a fixed
+/// label (off / failed / …) or a relative timestamp once we've synced
+/// at least once in this session. The glyph is redundant with the colour
+/// so colourblind users can still distinguish the states.
 fn sync_chip(app: &App, theme: &Theme) -> Line<'static> {
-    let (dot, label) = match app.sync_status {
-        SyncStatus::Disabled => (theme.text_muted, "sync off".to_string()),
-        SyncStatus::Skipped => (theme.text_muted, "sync skipped".to_string()),
-        SyncStatus::Failed => (theme.error, "sync error".to_string()),
-        SyncStatus::UpToDate | SyncStatus::Pulled | SyncStatus::PulledWithChanges => {
-            let color = if matches!(app.sync_status, SyncStatus::PulledWithChanges) {
-                theme.accent
-            } else {
-                theme.success
-            };
+    let (glyph, color, label) = match app.sync_status {
+        SyncStatus::Disabled => ("⊘", theme.text_muted, "sync off".to_string()),
+        SyncStatus::Skipped => ("⊘", theme.text_muted, "sync skipped".to_string()),
+        SyncStatus::Failed => ("✕", theme.error, "sync error".to_string()),
+        SyncStatus::UpToDate | SyncStatus::Pulled => {
             let label = match app.last_sync_at {
                 Some(t) => format!("synced {}", relative_time(t.elapsed())),
-                None => "sync ok".to_string(),
+                None => "synced".to_string(),
             };
-            (color, label)
+            ("✓", theme.success, label)
+        }
+        SyncStatus::PulledWithChanges => {
+            let label = match app.last_sync_at {
+                Some(t) => format!("synced {}", relative_time(t.elapsed())),
+                None => "synced".to_string(),
+            };
+            ("↻", theme.accent, label)
         }
     };
 
     let mut spans = vec![
-        Span::styled(" ● ", Style::default().fg(dot)),
+        Span::styled(format!(" {glyph} "), Style::default().fg(color)),
         Span::styled(label, Style::default().fg(theme.text_dim)),
     ];
     if app.sync_dirty == Some(true) {
         spans.push(Span::styled(" · ", Style::default().fg(theme.text_muted)));
         spans.push(Span::styled(
-            "unpushed",
+            "! unpushed",
             Style::default()
                 .fg(theme.warning)
                 .add_modifier(Modifier::BOLD),
@@ -1163,5 +1166,103 @@ mod tests {
             "expected empty checkbox glyph in: {rendered}"
         );
         assert!(rendered.contains("Off"));
+    }
+
+    fn render_with_sync_state(status: SyncStatus, dirty: Option<bool>) -> String {
+        let config = Config {
+            defaults: Default::default(),
+            sync: None,
+            categories: vec![],
+        };
+        let mut app = App::new(
+            config,
+            PathBuf::from("/tmp/x.yaml"),
+            status,
+            HistoryStore::default(),
+            FavoritesStore::default(),
+            TerminalLauncher::detect(None),
+        );
+        app.sync_dirty = dirty;
+
+        let backend = TestBackend::new(120, 30);
+        let mut terminal = Terminal::new(backend).expect("terminal");
+        terminal
+            .draw(|frame| super::draw(frame, &mut app))
+            .expect("ui draw");
+
+        let buf = terminal.backend().buffer().clone();
+        buf.content()
+            .iter()
+            .map(|cell| cell.symbol())
+            .collect::<String>()
+    }
+
+    #[test]
+    fn sync_chip_renders_disabled_glyph() {
+        let rendered = render_with_sync_state(SyncStatus::Disabled, None);
+        assert!(
+            rendered.contains('\u{2298}'),
+            "expected ⊘ glyph for Disabled in: {rendered}"
+        );
+        assert!(rendered.contains("sync off"));
+    }
+
+    #[test]
+    fn sync_chip_renders_skipped_glyph() {
+        let rendered = render_with_sync_state(SyncStatus::Skipped, None);
+        assert!(
+            rendered.contains('\u{2298}'),
+            "expected ⊘ glyph for Skipped in: {rendered}"
+        );
+        assert!(rendered.contains("sync skipped"));
+    }
+
+    #[test]
+    fn sync_chip_renders_failed_glyph() {
+        let rendered = render_with_sync_state(SyncStatus::Failed, None);
+        assert!(
+            rendered.contains('\u{2715}'),
+            "expected ✕ glyph for Failed in: {rendered}"
+        );
+        assert!(rendered.contains("sync error"));
+    }
+
+    #[test]
+    fn sync_chip_renders_up_to_date_glyph() {
+        let rendered = render_with_sync_state(SyncStatus::UpToDate, None);
+        assert!(
+            rendered.contains('\u{2713}'),
+            "expected ✓ glyph for UpToDate in: {rendered}"
+        );
+        assert!(rendered.contains("synced"));
+    }
+
+    #[test]
+    fn sync_chip_renders_pulled_glyph() {
+        let rendered = render_with_sync_state(SyncStatus::Pulled, None);
+        assert!(
+            rendered.contains('\u{2713}'),
+            "expected ✓ glyph for Pulled in: {rendered}"
+        );
+        assert!(rendered.contains("synced"));
+    }
+
+    #[test]
+    fn sync_chip_renders_pulled_with_changes_glyph() {
+        let rendered = render_with_sync_state(SyncStatus::PulledWithChanges, None);
+        assert!(
+            rendered.contains('\u{21BB}'),
+            "expected ↻ glyph for PulledWithChanges in: {rendered}"
+        );
+        assert!(rendered.contains("synced"));
+    }
+
+    #[test]
+    fn sync_chip_renders_unpushed_marker() {
+        let rendered = render_with_sync_state(SyncStatus::UpToDate, Some(true));
+        assert!(
+            rendered.contains("! unpushed"),
+            "expected '! unpushed' suffix in: {rendered}"
+        );
     }
 }
