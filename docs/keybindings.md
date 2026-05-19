@@ -65,10 +65,10 @@ Open with `e`. Esc returns to the previous screen.
 | `Space`                  | Toggle `auto-pull` / `auto-push` on the focused boolean row            |
 | `Enter` on a text field  | Apply the form (auto-clones the repo if missing locally)               |
 | `Enter` on a toggle      | Flip the boolean                                                       |
-| `[Test connection]`      | Probe the repo URL currently in the form via libgit2 `ls-remote`       |
-| `[Sync now]`             | Apply the form, then clone or fast-forward pull                        |
-| `[Save]`                 | Apply the form, then write the local config to disk (+ push on auto_push) |
-| `Ctrl+S`                 | Same as the `[Save]` button — universal save shortcut                  |
+| `[Test]`                 | Read-only probe — `ls-remote` against the URL currently in the form    |
+| `[Pull now]`             | Apply the form, then clone or fast-forward pull (no local write)       |
+| `[Save & push]`          | Apply the form, write the local config to disk, push if `auto_push`    |
+| `Ctrl+S`                 | Same as the `[Save & push]` button — universal save shortcut           |
 | `Esc`                    | Back to the settings menu                                              |
 
 ## Mnemonics

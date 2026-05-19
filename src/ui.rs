@@ -907,7 +907,7 @@ fn draw_sync_editor(frame: &mut Frame<'_>, editor: &EditorState, theme: &Theme, 
             Constraint::Length(3), // Local clone
             Constraint::Length(3), // Auto-pull toggle
             Constraint::Length(3), // Auto-push toggle
-            Constraint::Length(3), // Action buttons row
+            Constraint::Length(4), // Action buttons row (label + caption)
             Constraint::Min(0),
         ])
         .split(area);
@@ -970,12 +970,22 @@ fn draw_sync_buttons(frame: &mut Frame<'_>, editor: &EditorState, theme: &Theme,
         ])
         .split(area);
 
-    let buttons: [(usize, &str, ratatui::style::Color); 3] = [
-        (SYNC_BTN_TEST, "Test connection", theme.accent),
-        (SYNC_BTN_SYNC, "Sync now", theme.primary_glow),
-        (SYNC_BTN_SAVE, "Save", theme.success),
+    let buttons: [(usize, &str, &str, ratatui::style::Color); 3] = [
+        (SYNC_BTN_TEST, "Test", "read-only probe", theme.accent),
+        (
+            SYNC_BTN_SYNC,
+            "Pull now",
+            "apply + pull",
+            theme.primary_glow,
+        ),
+        (
+            SYNC_BTN_SAVE,
+            "Save & push",
+            "write + push if auto",
+            theme.success,
+        ),
     ];
-    for (i, (field, label, accent)) in buttons.iter().enumerate() {
+    for (i, (field, label, caption, accent)) in buttons.iter().enumerate() {
         let active = editor.sync_field == *field;
         let (bg, fg, border) = if active {
             (theme.surface_alt, theme.text, *accent)
@@ -986,7 +996,12 @@ fn draw_sync_buttons(frame: &mut Frame<'_>, editor: &EditorState, theme: &Theme,
         if active {
             text_style = text_style.add_modifier(Modifier::BOLD);
         }
-        let body = Paragraph::new(Line::from(Span::styled(format!(" {label} "), text_style)))
+        let caption_style = Style::default().fg(theme.text_muted).bg(bg);
+        let lines = vec![
+            Line::from(Span::styled(format!(" {label} "), text_style)),
+            Line::from(Span::styled(format!(" {caption} "), caption_style)),
+        ];
+        let body = Paragraph::new(lines)
             .alignment(Alignment::Center)
             .block(
                 Block::default()

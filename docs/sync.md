@@ -28,11 +28,13 @@ git operations use **libgit2** (vendored, with bundled libssh2 + OpenSSL). Both 
 
 Open settings with `e`, pick **Central repo sync**, fill in the Repo URL (and optionally branch / path / local clone path). The `auto-pull` and `auto-push` rows render as checkboxes (`[●] On` / `[○] Off`); press `Space` (or `Enter`) on the focused row to flip them — no need to type `true`/`false` by hand.
 
-Three action buttons sit underneath the form. Tab/↑↓ moves focus through them; `Enter` activates the focused button.
+Three action buttons sit underneath the form. Tab/↑↓ moves focus through them; `Enter` activates the focused button. Each button carries a one-line caption under its label so the side effects are obvious at a glance.
 
-- **[Test connection]** runs a credentialed `ls-remote` against the URL currently in the form. Nothing is written to disk, so you can confirm SSH keys / tokens before committing the config.
-- **[Sync now]** applies the form and then clones (first run) or fast-forward pulls. The latest inventory is loaded into the running session as soon as the network call finishes.
-- **[Save]** applies the form and writes the local config to disk. When `auto-push` is on, the inventory is committed and pushed upstream in the same step. `Ctrl+S` is kept as a parallel keyboard shortcut for muscle memory.
+### What each button does
+
+- **[Test]** — _read-only probe._ Runs a credentialed `ls-remote` against the URL currently in the form. Nothing is written to disk, so you can confirm SSH keys / tokens before committing the config.
+- **[Pull now]** — _apply + pull._ Applies the form and then clones (first run) or fast-forward pulls. The latest inventory is loaded into the running session as soon as the network call finishes. The local `config.yaml` is **not** rewritten.
+- **[Save & push]** — _write + push if auto._ Applies the form and writes the local config to disk. When `auto-push` is on, the inventory is committed and pushed upstream in the same step. `Ctrl+S` is kept as a parallel keyboard shortcut for muscle memory.
 
 Pressing `Enter` while focused on a plain text field still applies the form silently — and triggers an auto-clone if `sync.local` is missing — so the form remains usable for keyboard-only flows.
 

@@ -555,7 +555,7 @@ fn handle_editor_event(app: &mut App, code: KeyCode, ctrl: bool) -> Result<bool>
             {
                 editor.sync_inputs[editor.sync_field].pop();
             }
-            // Universal save shortcut — kept alongside the [Save] button.
+            // Universal save shortcut — kept alongside the [Save & push] button.
             KeyCode::Char('s') if ctrl => save_config(app)?,
             // Space toggles boolean fields.
             KeyCode::Char(' ') if sync_field_is_bool(editor.sync_field) => {
