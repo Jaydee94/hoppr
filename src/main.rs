@@ -524,10 +524,10 @@ fn handle_editor_event(app: &mut App, code: KeyCode, ctrl: bool) -> Result<bool>
         EditorView::Defaults => match code {
             KeyCode::Esc => editor.view = EditorView::Menu,
             KeyCode::Tab | KeyCode::Down => {
-                editor.defaults_field = (editor.defaults_field + 1) % 3;
+                editor.defaults_field = (editor.defaults_field + 1) % 4;
             }
             KeyCode::BackTab | KeyCode::Up => {
-                editor.defaults_field = (editor.defaults_field + 3 - 1) % 3;
+                editor.defaults_field = (editor.defaults_field + 4 - 1) % 4;
             }
             KeyCode::Backspace => {
                 editor.defaults_inputs[editor.defaults_field].pop();

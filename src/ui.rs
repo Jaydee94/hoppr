@@ -833,7 +833,12 @@ fn draw_category_form(frame: &mut Frame<'_>, form: &CategoryForm, theme: &Theme,
 }
 
 fn draw_defaults_editor(frame: &mut Frame<'_>, editor: &EditorState, theme: &Theme, area: Rect) {
-    let labels = ["Command", "Default port", "Default user"];
+    let labels = [
+        "Command",
+        "Default port",
+        "Default user",
+        "Terminal command",
+    ];
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints(
@@ -845,15 +850,20 @@ fn draw_defaults_editor(frame: &mut Frame<'_>, editor: &EditorState, theme: &The
         .split(area);
     for (i, label) in labels.iter().enumerate() {
         let active = editor.defaults_field == i;
+        // Terminal command falls back to runtime auto-detection when blank;
+        // surface that contract as a muted placeholder rather than an empty cell.
+        let value = &editor.defaults_inputs[i];
+        let value_span = if value.is_empty() && i == 3 {
+            Span::styled("auto-detected", Style::default().fg(theme.text_muted))
+        } else {
+            Span::styled(value.clone(), Style::default().fg(theme.text))
+        };
         let para = Paragraph::new(Line::from(vec![
             Span::styled(
-                format!(" {label:<14} "),
+                format!(" {label:<16} "),
                 Style::default().fg(theme.text_dim),
             ),
-            Span::styled(
-                editor.defaults_inputs[i].clone(),
-                Style::default().fg(theme.text),
-            ),
+            value_span,
             if active {
                 Span::styled("▌", Style::default().fg(theme.accent))
             } else {

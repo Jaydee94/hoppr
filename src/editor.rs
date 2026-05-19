@@ -186,7 +186,7 @@ pub struct EditorState {
     pub host_form: Option<HostForm>,
     pub category_form: Option<CategoryForm>,
     pub defaults_field: usize,
-    pub defaults_inputs: [String; 3], // command program, port, user
+    pub defaults_inputs: [String; 4], // command program, port, user, terminal_command
     pub sync_field: usize,
     pub sync_inputs: [String; 6], // repo, branch, path, local, auto_pull, auto_push
     pub dirty: bool,
@@ -228,6 +228,7 @@ impl EditorState {
             config.defaults.command.program().to_string(),
             config.defaults.port.to_string(),
             config.defaults.user.clone().unwrap_or_default(),
+            config.defaults.terminal_command.clone().unwrap_or_default(),
         ];
         let sync = config.sync.clone().unwrap_or_default();
         let sync_inputs = [
@@ -286,6 +287,7 @@ impl EditorState {
         config.defaults.command = ConnectCommand::Program(program.into());
         config.defaults.port = port;
         config.defaults.user = empty_to_none(&self.defaults_inputs[2]);
+        config.defaults.terminal_command = empty_to_none(&self.defaults_inputs[3]);
         self.dirty = true;
         Ok(())
     }
@@ -388,5 +390,25 @@ mod tests {
         state.sync_inputs[SYNC_REPO] = "git@example.com:x/y.git".into();
         assert_eq!(state.toggle_sync_bool(SYNC_REPO), "");
         assert_eq!(state.sync_inputs[SYNC_REPO], "git@example.com:x/y.git");
+    }
+
+    #[test]
+    fn apply_defaults_writes_terminal_command_when_set() {
+        let mut config = Config::default();
+        let mut state = EditorState::from_config(&config);
+        state.defaults_inputs[3] = "  wt  ".into();
+        state.apply_defaults(&mut config).unwrap();
+        assert_eq!(config.defaults.terminal_command.as_deref(), Some("wt"));
+    }
+
+    #[test]
+    fn apply_defaults_clears_terminal_command_when_empty() {
+        let mut config = Config::default();
+        config.defaults.terminal_command = Some("alacritty -e".into());
+        let mut state = EditorState::from_config(&config);
+        assert_eq!(state.defaults_inputs[3], "alacritty -e");
+        state.defaults_inputs[3].clear();
+        state.apply_defaults(&mut config).unwrap();
+        assert!(config.defaults.terminal_command.is_none());
     }
 }
