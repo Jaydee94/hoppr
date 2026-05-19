@@ -769,30 +769,39 @@ fn draw_host_form(frame: &mut Frame<'_>, form: &HostForm, theme: &Theme, area: R
         .split(area);
     for (i, label) in HostForm::LABELS.iter().enumerate() {
         let active = form.focused == i;
-        let para = Paragraph::new(Line::from(vec![
+        let error = form.field_error(i);
+        let mut spans = vec![
             Span::styled(
                 format!(" {label:<10} "),
                 Style::default().fg(theme.text_dim),
             ),
             Span::styled(form.fields[i].clone(), Style::default().fg(theme.text)),
-            if active {
-                Span::styled("▌", Style::default().fg(theme.accent))
-            } else {
-                Span::raw("")
-            },
-        ]))
-        .block(
-            Block::default()
-                .borders(Borders::ALL)
-                .border_type(BorderType::Rounded)
-                .border_style(Style::default().fg(if active {
-                    theme.primary
-                } else {
-                    theme.border
-                }))
-                .style(Style::default().bg(theme.surface)),
-        )
-        .style(Style::default().bg(theme.surface));
+        ];
+        if active {
+            spans.push(Span::styled("▌", Style::default().fg(theme.accent)));
+        }
+        if let Some(err) = error {
+            spans.push(Span::styled(
+                format!(" · {err}"),
+                Style::default().fg(theme.text_muted),
+            ));
+        }
+        let border_color = if error.is_some() {
+            theme.error
+        } else if active {
+            theme.primary
+        } else {
+            theme.border
+        };
+        let para = Paragraph::new(Line::from(spans))
+            .block(
+                Block::default()
+                    .borders(Borders::ALL)
+                    .border_type(BorderType::Rounded)
+                    .border_style(Style::default().fg(border_color))
+                    .style(Style::default().bg(theme.surface)),
+            )
+            .style(Style::default().bg(theme.surface));
         frame.render_widget(para, chunks[i]);
     }
     if let Some(hint_area) = chunks.get(HostForm::LABELS.len()) {
@@ -817,30 +826,39 @@ fn draw_category_form(frame: &mut Frame<'_>, form: &CategoryForm, theme: &Theme,
         .split(area);
     for (i, label) in CategoryForm::LABELS.iter().enumerate() {
         let active = form.focused == i;
-        let para = Paragraph::new(Line::from(vec![
+        let error = form.field_error(i);
+        let mut spans = vec![
             Span::styled(
                 format!(" {label:<10} "),
                 Style::default().fg(theme.text_dim),
             ),
             Span::styled(form.fields[i].clone(), Style::default().fg(theme.text)),
-            if active {
-                Span::styled("▌", Style::default().fg(theme.accent))
-            } else {
-                Span::raw("")
-            },
-        ]))
-        .block(
-            Block::default()
-                .borders(Borders::ALL)
-                .border_type(BorderType::Rounded)
-                .border_style(Style::default().fg(if active {
-                    theme.primary
-                } else {
-                    theme.border
-                }))
-                .style(Style::default().bg(theme.surface)),
-        )
-        .style(Style::default().bg(theme.surface));
+        ];
+        if active {
+            spans.push(Span::styled("▌", Style::default().fg(theme.accent)));
+        }
+        if let Some(err) = error {
+            spans.push(Span::styled(
+                format!(" · {err}"),
+                Style::default().fg(theme.text_muted),
+            ));
+        }
+        let border_color = if error.is_some() {
+            theme.error
+        } else if active {
+            theme.primary
+        } else {
+            theme.border
+        };
+        let para = Paragraph::new(Line::from(spans))
+            .block(
+                Block::default()
+                    .borders(Borders::ALL)
+                    .border_type(BorderType::Rounded)
+                    .border_style(Style::default().fg(border_color))
+                    .style(Style::default().bg(theme.surface)),
+            )
+            .style(Style::default().bg(theme.surface));
         frame.render_widget(para, chunks[i]);
     }
 }

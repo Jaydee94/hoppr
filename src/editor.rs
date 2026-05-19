@@ -31,6 +31,7 @@ pub struct HostForm {
     pub host_index: Option<usize>,
     pub fields: [String; 7], // name, ip, user, port, cmd, command_program, command_args
     pub focused: usize,
+    pub submitted_once: bool,
 }
 
 impl HostForm {
@@ -56,6 +57,7 @@ impl HostForm {
             host_index: None,
             fields: Default::default(),
             focused: 0,
+            submitted_once: false,
         }
     }
 
@@ -80,6 +82,29 @@ impl HostForm {
             host_index: Some(host_index),
             fields,
             focused: 0,
+            submitted_once: false,
+        }
+    }
+
+    /// Validation message for the field at `idx`, or `None` if no error
+    /// should be surfaced. Returns `None` until the user has attempted to
+    /// submit at least once so editing stays quiet on the first pass.
+    pub fn field_error(&self, idx: usize) -> Option<&'static str> {
+        if !self.submitted_once {
+            return None;
+        }
+        match idx {
+            0 if self.fields[0].trim().is_empty() => Some("required"),
+            1 if self.fields[1].trim().is_empty() => Some("required"),
+            3 => {
+                let port = self.fields[3].trim();
+                if !port.is_empty() && port.parse::<u16>().is_err() {
+                    Some("0-65535")
+                } else {
+                    None
+                }
+            }
+            _ => None,
         }
     }
 
@@ -149,6 +174,7 @@ pub struct CategoryForm {
     pub category_index: Option<usize>,
     pub fields: [String; 2], // name, icon
     pub focused: usize,
+    pub submitted_once: bool,
 }
 
 impl CategoryForm {
@@ -160,6 +186,7 @@ impl CategoryForm {
             category_index: None,
             fields: Default::default(),
             focused: 0,
+            submitted_once: false,
         }
     }
 
@@ -172,6 +199,20 @@ impl CategoryForm {
                 category.icon.clone().unwrap_or_default(),
             ],
             focused: 0,
+            submitted_once: false,
+        }
+    }
+
+    /// Validation message for the field at `idx`, or `None` if no error
+    /// should be surfaced. Returns `None` until the user has attempted to
+    /// submit at least once.
+    pub fn field_error(&self, idx: usize) -> Option<&'static str> {
+        if !self.submitted_once {
+            return None;
+        }
+        match idx {
+            0 if self.fields[0].trim().is_empty() => Some("required"),
+            _ => None,
         }
     }
 
@@ -479,6 +520,48 @@ mod tests {
             .to_host()
             .expect_err("args without program should fail");
         assert!(err.contains("program"), "unexpected error: {err}");
+    }
+
+    #[test]
+    fn host_form_field_error_reports_required_name_after_submit() {
+        let mut form = HostForm::new_create(0);
+        assert!(!form.submitted_once);
+        assert_eq!(form.field_error(0), None);
+        form.submitted_once = true;
+        assert_eq!(form.field_error(0), Some("required"));
+    }
+
+    #[test]
+    fn host_form_field_error_flags_unparseable_port() {
+        let mut form = HostForm::new_create(0);
+        form.fields[0] = "web".into();
+        form.fields[1] = "10.0.0.1".into();
+        form.fields[3] = "abc".into();
+        form.submitted_once = true;
+        assert_eq!(form.field_error(3), Some("0-65535"));
+    }
+
+    #[test]
+    fn host_form_field_error_none_when_valid() {
+        let mut form = HostForm::new_create(0);
+        form.fields[0] = "web".into();
+        form.fields[1] = "10.0.0.1".into();
+        form.fields[3] = "22".into();
+        form.submitted_once = true;
+        for idx in 0..form.fields.len() {
+            assert_eq!(form.field_error(idx), None, "idx {idx}");
+        }
+    }
+
+    #[test]
+    fn category_form_field_error_reports_required_name() {
+        let mut form = CategoryForm::new_create();
+        assert_eq!(form.field_error(0), None);
+        form.submitted_once = true;
+        assert_eq!(form.field_error(0), Some("required"));
+        form.fields[0] = "ops".into();
+        assert_eq!(form.field_error(0), None);
+        assert_eq!(form.field_error(1), None);
     }
 
     #[test]

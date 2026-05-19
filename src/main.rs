@@ -646,6 +646,7 @@ fn handle_category_form(
             None
         }
         KeyCode::Enter => {
+            form.submitted_once = true;
             let mut cat = if form.mode_create {
                 Category::default()
             } else {
@@ -711,6 +712,7 @@ fn handle_host_form(
             None
         }
         KeyCode::Enter => {
+            form.submitted_once = true;
             let host = match form.to_host() {
                 Ok(h) => h,
                 Err(err) => return Some(err),
