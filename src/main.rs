@@ -205,6 +205,21 @@ fn event_loop(terminal: &mut Terminal<CrosstermBackend<Stdout>>, app: &mut App) 
         }
         let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
 
+        if app.show_help {
+            match key.code {
+                KeyCode::Char('?') | KeyCode::F(1) | KeyCode::Esc | KeyCode::Char('q') => {
+                    app.show_help = false;
+                }
+                _ => {}
+            }
+            continue;
+        }
+
+        if matches!(key.code, KeyCode::Char('?') | KeyCode::F(1)) && help_toggle_allowed(app) {
+            app.toggle_help();
+            continue;
+        }
+
         match app.mode {
             Mode::Browse => match key.code {
                 KeyCode::Char('c') if ctrl => return Ok(()),
@@ -271,6 +286,20 @@ fn event_loop(terminal: &mut Terminal<CrosstermBackend<Stdout>>, app: &mut App) 
                 }
             }
         }
+    }
+}
+
+/// `?` and F1 must NOT toggle the help overlay when the focused widget
+/// would otherwise consume them as text input: the browse-mode search
+/// box, and the editor's form/text views. We only allow it in list-style
+/// contexts where these keys are otherwise unused.
+fn help_toggle_allowed(app: &App) -> bool {
+    match app.mode {
+        Mode::Browse => app.focus != Focus::Search,
+        Mode::Edit => matches!(
+            app.editor.as_ref().map(|e| e.view),
+            Some(EditorView::Menu) | Some(EditorView::Categories) | Some(EditorView::Hosts)
+        ),
     }
 }
 

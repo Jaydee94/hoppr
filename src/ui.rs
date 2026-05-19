@@ -58,6 +58,12 @@ pub fn draw(frame: &mut Frame<'_>, app: &mut App) {
         frame.render_widget(Clear, overlay);
         draw_editor(frame, app, &theme, overlay);
     }
+
+    if app.show_help {
+        let overlay = centered_rect(80, 80, area);
+        frame.render_widget(Clear, overlay);
+        draw_help(frame, &theme, overlay);
+    }
 }
 
 fn draw_header(frame: &mut Frame<'_>, app: &App, theme: &Theme, area: Rect) {
@@ -471,6 +477,7 @@ fn draw_hints(frame: &mut Frame<'_>, app: &App, theme: &Theme, area: Rect) {
             if app.terminal.is_available() {
                 h.push(("t", "New tab"));
             }
+            h.push(("?", "Help"));
             h.push(("q", "Quit"));
             h
         }
@@ -600,6 +607,121 @@ fn centered_rect(percent_x: u16, percent_y: u16, r: Rect) -> Rect {
             Constraint::Percentage((100 - percent_x) / 2),
         ])
         .split(popup_layout[1])[1]
+}
+
+fn draw_help(frame: &mut Frame<'_>, theme: &Theme, area: Rect) {
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_type(BorderType::Thick)
+        .border_style(Style::default().fg(theme.primary).bg(theme.surface))
+        .style(Style::default().bg(theme.surface))
+        .title(Span::styled(
+            " Keybindings ",
+            Style::default()
+                .fg(theme.primary_glow)
+                .add_modifier(Modifier::BOLD),
+        ));
+    frame.render_widget(block, area);
+
+    let inner = area.inner(Margin {
+        horizontal: 2,
+        vertical: 1,
+    });
+    let split = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Min(3), Constraint::Length(1)])
+        .split(inner);
+
+    let columns = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
+        .split(split[0]);
+
+    let browse: &[(&str, &str)] = &[
+        ("Tab", "Toggle focus (Categories ↔ Hosts)"),
+        ("/", "Search"),
+        ("Ctrl+A", "Toggle global / current-category search"),
+        ("Ctrl+U", "Clear search query"),
+        ("Backspace", "Delete char in search"),
+        ("e", "Open settings editor"),
+        ("f", "Star / unstar host"),
+        ("t", "Open connection in new tab"),
+        ("Enter", "Connect to selected host"),
+        ("↑ ↓ / j k", "Move selection"),
+        ("? / F1", "Toggle this help"),
+        ("q / Esc / Ctrl+C", "Quit"),
+    ];
+    let editor_lists: &[(&str, &str)] = &[
+        ("↑ ↓ / j k", "Move within list"),
+        ("a", "Add"),
+        ("r / Enter", "Edit selected"),
+        ("d", "Delete"),
+        ("Ctrl+S", "Save config to disk"),
+        ("Tab / Shift+Tab", "Next / previous category (Hosts view)"),
+        ("Esc", "Back"),
+    ];
+    let forms: &[(&str, &str)] = &[
+        ("Tab / Shift+Tab", "Next / previous field"),
+        ("↑ ↓", "Next / previous field"),
+        ("Backspace", "Delete char"),
+        ("Enter", "Confirm"),
+        ("Esc", "Cancel"),
+    ];
+    let search: &[(&str, &str)] = &[
+        ("Backspace", "Delete char"),
+        ("Ctrl+U", "Clear query"),
+        ("Ctrl+A", "Toggle global search"),
+        ("Enter", "Confirm and return"),
+    ];
+
+    let mut left: Vec<Line<'static>> = Vec::new();
+    push_help_section(&mut left, "Browse", browse, theme);
+    left.push(Line::from(""));
+    push_help_section(&mut left, "Search input", search, theme);
+
+    let mut right: Vec<Line<'static>> = Vec::new();
+    push_help_section(&mut right, "Editor lists", editor_lists, theme);
+    right.push(Line::from(""));
+    push_help_section(&mut right, "Forms", forms, theme);
+
+    let left_para = Paragraph::new(left).style(Style::default().bg(theme.surface));
+    frame.render_widget(left_para, columns[0]);
+    let right_para = Paragraph::new(right).style(Style::default().bg(theme.surface));
+    frame.render_widget(right_para, columns[1]);
+
+    let footer = Paragraph::new(Line::from(Span::styled(
+        "Press ? or Esc to close",
+        Style::default().fg(theme.text_muted),
+    )))
+    .alignment(Alignment::Center)
+    .style(Style::default().bg(theme.surface));
+    frame.render_widget(footer, split[1]);
+}
+
+fn push_help_section(
+    lines: &mut Vec<Line<'static>>,
+    title: &str,
+    entries: &[(&str, &str)],
+    theme: &Theme,
+) {
+    lines.push(Line::from(Span::styled(
+        title.to_string(),
+        Style::default()
+            .fg(theme.primary_glow)
+            .add_modifier(Modifier::BOLD),
+    )));
+    for (key, label) in entries {
+        lines.push(Line::from(vec![
+            Span::raw("  "),
+            Span::styled(
+                format!("{key:<18}"),
+                Style::default()
+                    .fg(theme.accent)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Span::styled(label.to_string(), Style::default().fg(theme.text_dim)),
+        ]));
+    }
 }
 
 fn draw_editor(frame: &mut Frame<'_>, app: &App, theme: &Theme, area: Rect) {
@@ -1481,6 +1603,45 @@ mod tests {
         assert!(
             rendered.contains("! unpushed"),
             "expected '! unpushed' suffix in: {rendered}"
+        );
+    }
+
+    #[test]
+    fn help_overlay_renders_keybindings_title_and_entries() {
+        let config = Config {
+            defaults: Default::default(),
+            sync: None,
+            categories: vec![],
+        };
+        let mut app = App::new(
+            config,
+            PathBuf::from("/tmp/x.yaml"),
+            SyncStatus::Disabled,
+            HistoryStore::default(),
+            FavoritesStore::default(),
+            TerminalLauncher::detect(None),
+        );
+        app.show_help = true;
+
+        let backend = TestBackend::new(120, 30);
+        let mut terminal = Terminal::new(backend).expect("terminal");
+        terminal
+            .draw(|frame| super::draw(frame, &mut app))
+            .expect("ui draw");
+
+        let buf = terminal.backend().buffer().clone();
+        let rendered = buf
+            .content()
+            .iter()
+            .map(|cell| cell.symbol())
+            .collect::<String>();
+        assert!(
+            rendered.contains("Keybindings"),
+            "expected 'Keybindings' title in help overlay, got: {rendered}"
+        );
+        assert!(
+            rendered.contains("Ctrl+A"),
+            "expected 'Ctrl+A' binding in help overlay, got: {rendered}"
         );
     }
 }

@@ -69,7 +69,7 @@ hoppr config init       # writes a starter config at ~/.config/hoppr/config.yaml
 hoppr                   # launch the TUI
 ```
 
-In the TUI: `/` to search, `↑ ↓` to navigate, `Enter` to connect, `e` to edit hosts, `q` to quit. Full keymap → [`docs/keybindings.md`](docs/keybindings.md).
+In the TUI: `/` to search, `↑ ↓` to navigate, `Enter` to connect, `e` to edit hosts, `?` for in-app help, `q` to quit. Full keymap → [`docs/keybindings.md`](docs/keybindings.md).
 
 ## Highlights
 

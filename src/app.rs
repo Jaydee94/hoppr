@@ -138,6 +138,9 @@ pub struct App {
     pub history: HistoryStore,
     pub favorites: FavoritesStore,
     pub terminal: TerminalLauncher,
+    /// When `true`, the help overlay is drawn on top of everything and
+    /// the event loop swallows every key except the close-help shortcuts.
+    pub show_help: bool,
     matcher: SkimMatcherV2,
 }
 
@@ -173,6 +176,7 @@ impl App {
             history,
             favorites,
             terminal,
+            show_help: false,
             matcher: SkimMatcherV2::default(),
         };
         app.ensure_valid_selection();
@@ -532,6 +536,10 @@ impl App {
             })
             .unwrap_or(0);
         self.hosts_state.select(Some(new_idx));
+    }
+
+    pub fn toggle_help(&mut self) {
+        self.show_help = !self.show_help;
     }
 
     pub fn enter_edit_mode(&mut self) {

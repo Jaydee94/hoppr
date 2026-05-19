@@ -18,6 +18,7 @@
 | `e`                  | Open the in-TUI settings menu                               |
 | `Backspace`          | When in Search: delete a character                          |
 | `Ctrl+U`             | When in Search: clear the query (stays in search focus)     |
+| `?` / `F1`           | Toggle the in-app help overlay (Esc / `q` also closes it)   |
 
 ### Virtual categories
 
@@ -41,18 +42,11 @@ If the editor has unsaved changes when you press `Esc` on the settings menu, hop
 | `Enter`              | Open the selected item · submit the current form            |
 | `a`                  | Add a new category / host                                   |
 | `r`                  | Rename / edit the selected item                             |
-<<<<<<< HEAD
-| `d`                  | Delete the selected item (no undo)                          |
-<<<<<<< HEAD
-| `Ctrl+S`             | Save the config to disk (universal across all editor views) |
-=======
 | `d`                  | Request deletion of the selected item (prompts `y/n`)       |
 | `y` / `n`            | Confirm / cancel a pending delete prompt                    |
-=======
 | `/`                  | Filter the current list (Categories / Hosts) by name        |
->>>>>>> e9330d4 (feat(editor): add filter to categories and hosts lists)
-| `s`                  | Save the config to disk (`Ctrl+S` inside form views)        |
->>>>>>> 8d0e954 (feat(editor): confirm destructive deletes in editor)
+| `Ctrl+S`             | Save the config to disk (universal across all editor views) |
+| `?` / `F1`           | Toggle the in-app help overlay (list views only)            |
 | `Esc`                | Back to the previous screen                                 |
 
 ### Filter input (Categories / Hosts)
