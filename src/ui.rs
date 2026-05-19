@@ -481,7 +481,7 @@ fn draw_hints(frame: &mut Frame<'_>, app: &App, theme: &Theme, area: Rect) {
                 ("↩", "Edit"),
                 ("a", "Add"),
                 ("d", "Delete"),
-                ("s", "Save"),
+                ("⌃s", "Save"),
                 ("Esc", "Back"),
             ],
             Some(EditorView::Hosts) => vec![
@@ -490,7 +490,7 @@ fn draw_hints(frame: &mut Frame<'_>, app: &App, theme: &Theme, area: Rect) {
                 ("↩", "Edit"),
                 ("a", "Add"),
                 ("d", "Delete"),
-                ("s", "Save"),
+                ("⌃s", "Save"),
                 ("Esc", "Back"),
             ],
             Some(EditorView::CategoryForm) | Some(EditorView::HostForm) => {

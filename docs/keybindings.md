@@ -40,7 +40,7 @@ Open with `e`. Esc returns to the previous screen.
 | `a`                  | Add a new category / host                                   |
 | `r`                  | Rename / edit the selected item                             |
 | `d`                  | Delete the selected item (no undo)                          |
-| `s`                  | Save the config to disk (`Ctrl+S` inside form views)        |
+| `Ctrl+S`             | Save the config to disk (universal across all editor views) |
 | `Esc`                | Back to the previous screen                                 |
 
 ### Settings menu
@@ -74,6 +74,6 @@ Open with `e`. Esc returns to the previous screen.
 ## Mnemonics
 
 - `e` for **edit** — opens settings.
-- `s` for **save** — flush to disk.
+- `Ctrl+S` for **save** — flush to disk (works in every editor view).
 - `r` for **rename / replace** — also acts as "edit selected".
 - `/` from many TUIs you've used before.

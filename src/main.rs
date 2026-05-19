@@ -410,7 +410,7 @@ fn handle_editor_event(app: &mut App, code: KeyCode, ctrl: bool) -> Result<bool>
                 editor.menu_index = (editor.menu_index + 1) % MENU_ITEMS.len();
             }
             KeyCode::Enter => editor.view = MENU_ITEMS[editor.menu_index].1,
-            KeyCode::Char('s') if editor.dirty => save_config(app)?,
+            KeyCode::Char('s') if ctrl && editor.dirty => save_config(app)?,
             _ => {}
         },
         EditorView::Categories => match code {
@@ -439,7 +439,7 @@ fn handle_editor_event(app: &mut App, code: KeyCode, ctrl: bool) -> Result<bool>
                 editor.dirty = true;
                 editor.flash("Category removed");
             }
-            KeyCode::Char('s') if editor.dirty => save_config(app)?,
+            KeyCode::Char('s') if ctrl && editor.dirty => save_config(app)?,
             _ => {}
         },
         EditorView::Hosts => match code {
@@ -506,7 +506,7 @@ fn handle_editor_event(app: &mut App, code: KeyCode, ctrl: bool) -> Result<bool>
                     }
                 }
             }
-            KeyCode::Char('s') if editor.dirty => save_config(app)?,
+            KeyCode::Char('s') if ctrl && editor.dirty => save_config(app)?,
             _ => {}
         },
         EditorView::CategoryForm => {
