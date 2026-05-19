@@ -243,6 +243,17 @@ impl CategoryForm {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum PendingDelete {
+    Category {
+        name: String,
+    },
+    Host {
+        category_name: String,
+        host_name: String,
+    },
+}
+
 #[derive(Debug, Clone)]
 pub struct EditorState {
     pub view: EditorView,
@@ -261,6 +272,7 @@ pub struct EditorState {
     /// While true, the event handler short-circuits to a save/discard/cancel
     /// prompt instead of silently writing the config to disk.
     pub pending_exit: bool,
+    pub pending_delete: Option<PendingDelete>,
 }
 
 /// Layout of the sync editor.
@@ -323,11 +335,63 @@ impl EditorState {
             dirty: false,
             flash: None,
             pending_exit: false,
+            pending_delete: None,
         }
     }
 
     pub fn flash(&mut self, msg: impl Into<String>) {
         self.flash = Some(msg.into());
+    }
+
+    /// Stage a destructive delete so the user confirms before the entry is
+    /// removed. Use [`Self::confirm_delete`] / [`Self::cancel_delete`] to
+    /// resolve the prompt.
+    pub fn request_delete(&mut self, pending: PendingDelete) {
+        self.pending_delete = Some(pending);
+    }
+
+    /// Apply the queued delete against `config`. Returns `true` when a delete
+    /// actually happened — callers should flash a "removed" message and mark
+    /// the editor dirty. Returns `false` if no delete was pending or if the
+    /// referenced entry no longer exists (e.g. the config changed between the
+    /// keypress and the confirmation).
+    pub fn confirm_delete(&mut self, config: &mut Config) -> bool {
+        let Some(pending) = self.pending_delete.take() else {
+            return false;
+        };
+        match pending {
+            PendingDelete::Category { name } => {
+                if let Some(idx) = config.categories.iter().position(|c| c.name == name) {
+                    config.categories.remove(idx);
+                    self.dirty = true;
+                    return true;
+                }
+            }
+            PendingDelete::Host {
+                category_name,
+                host_name,
+            } => {
+                if let Some(cat) = config
+                    .categories
+                    .iter_mut()
+                    .find(|c| c.name == category_name)
+                {
+                    if let Some(idx) = cat.hosts.iter().position(|h| h.name == host_name) {
+                        cat.hosts.remove(idx);
+                        self.dirty = true;
+                        return true;
+                    }
+                }
+            }
+        }
+        false
+    }
+
+    /// Drop the queued delete without mutating the config. Returns `true`
+    /// when there was a pending delete to cancel, so callers can decide
+    /// whether to surface a "cancelled" flash.
+    pub fn cancel_delete(&mut self) -> bool {
+        self.pending_delete.take().is_some()
     }
 
     pub fn clamp(&mut self, config: &Config) {
@@ -589,5 +653,100 @@ mod tests {
         state.defaults_inputs[3].clear();
         state.apply_defaults(&mut config).unwrap();
         assert!(config.defaults.terminal_command.is_none());
+    }
+
+    fn config_with_one_host() -> Config {
+        let mut config = Config::default();
+        config.categories.push(Category {
+            name: "ops".into(),
+            icon: None,
+            hosts: vec![Host {
+                name: "web-01".into(),
+                ip: "10.0.0.1".into(),
+                user: None,
+                port: None,
+                cmd: None,
+                command: None,
+            }],
+        });
+        config
+    }
+
+    #[test]
+    fn request_delete_stores_pending_state() {
+        let mut state = EditorState::from_config(&Config::default());
+        assert!(state.pending_delete.is_none());
+        state.request_delete(PendingDelete::Category { name: "ops".into() });
+        assert_eq!(
+            state.pending_delete,
+            Some(PendingDelete::Category { name: "ops".into() })
+        );
+    }
+
+    #[test]
+    fn confirm_delete_removes_category_and_marks_dirty() {
+        let mut config = config_with_one_host();
+        let mut state = EditorState::from_config(&config);
+        state.request_delete(PendingDelete::Category { name: "ops".into() });
+        assert!(state.confirm_delete(&mut config));
+        assert!(config.categories.is_empty());
+        assert!(state.dirty);
+        assert!(state.pending_delete.is_none());
+    }
+
+    #[test]
+    fn confirm_delete_removes_host_and_marks_dirty() {
+        let mut config = config_with_one_host();
+        let mut state = EditorState::from_config(&config);
+        state.request_delete(PendingDelete::Host {
+            category_name: "ops".into(),
+            host_name: "web-01".into(),
+        });
+        assert!(state.confirm_delete(&mut config));
+        assert!(config.categories[0].hosts.is_empty());
+        assert!(state.dirty);
+        assert!(state.pending_delete.is_none());
+    }
+
+    #[test]
+    fn confirm_delete_without_pending_is_a_noop() {
+        let mut config = config_with_one_host();
+        let mut state = EditorState::from_config(&config);
+        assert!(!state.confirm_delete(&mut config));
+        assert!(!state.dirty);
+        assert_eq!(config.categories.len(), 1);
+    }
+
+    #[test]
+    fn confirm_delete_with_missing_target_leaves_state_untouched() {
+        let mut config = config_with_one_host();
+        let mut state = EditorState::from_config(&config);
+        state.request_delete(PendingDelete::Category {
+            name: "missing".into(),
+        });
+        assert!(!state.confirm_delete(&mut config));
+        assert!(!state.dirty);
+        assert!(state.pending_delete.is_none());
+        assert_eq!(config.categories.len(), 1);
+    }
+
+    #[test]
+    fn cancel_delete_clears_pending_without_mutation() {
+        let config = config_with_one_host();
+        let mut state = EditorState::from_config(&config);
+        state.request_delete(PendingDelete::Host {
+            category_name: "ops".into(),
+            host_name: "web-01".into(),
+        });
+        assert!(state.cancel_delete());
+        assert!(state.pending_delete.is_none());
+        assert!(!state.dirty);
+        assert_eq!(config.categories[0].hosts.len(), 1);
+    }
+
+    #[test]
+    fn cancel_delete_when_idle_returns_false() {
+        let mut state = EditorState::from_config(&Config::default());
+        assert!(!state.cancel_delete());
     }
 }

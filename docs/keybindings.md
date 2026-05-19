@@ -41,8 +41,14 @@ If the editor has unsaved changes when you press `Esc` on the settings menu, hop
 | `Enter`              | Open the selected item · submit the current form            |
 | `a`                  | Add a new category / host                                   |
 | `r`                  | Rename / edit the selected item                             |
+<<<<<<< HEAD
 | `d`                  | Delete the selected item (no undo)                          |
 | `Ctrl+S`             | Save the config to disk (universal across all editor views) |
+=======
+| `d`                  | Request deletion of the selected item (prompts `y/n`)       |
+| `y` / `n`            | Confirm / cancel a pending delete prompt                    |
+| `s`                  | Save the config to disk (`Ctrl+S` inside form views)        |
+>>>>>>> 8d0e954 (feat(editor): confirm destructive deletes in editor)
 | `Esc`                | Back to the previous screen                                 |
 
 ### Settings menu
@@ -54,8 +60,8 @@ If the editor has unsaved changes when you press `Esc` on the settings menu, hop
   Central repo sync
 ```
 
-- **Manage categories** — list, add (`a`), rename (`r` / `Enter`), delete (`d`).
-- **Manage hosts** — `Tab` / `Shift+Tab` cycle to the next / previous category. Use `↑↓` (or `j`/`k`) to move within the host list. Same `a/r/d` semantics.
+- **Manage categories** — list, add (`a`), rename (`r` / `Enter`), delete (`d` then confirm with `y`).
+- **Manage hosts** — `Tab` / `Shift+Tab` cycle to the next / previous category. Use `↑↓` (or `j`/`k`) to move within the host list. Same `a/r/d` semantics; `d` opens a `y/n` confirmation modal so a stray keypress can't wipe an entry.
 - **Connection defaults** — edit `defaults.command` (program), default port, default user.
 - **Central repo sync** — edit the `sync.*` block. Tab/↑↓ moves through the six form fields and the three action buttons underneath; `Space` toggles `auto-pull` / `auto-push`; `Enter` either applies the form (text fields), flips the toggle (booleans), or fires the button. `Ctrl+S` is a universal save shortcut.
 

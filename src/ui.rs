@@ -23,8 +23,8 @@ use crate::{
     app::{relative_time, App, Focus, MessageKind, Mode, VirtualCategoryKind},
     connect,
     editor::{
-        sync_field_is_bool, CategoryForm, EditorState, EditorView, HostForm, MENU_ITEMS,
-        SYNC_BTN_SAVE, SYNC_BTN_SYNC, SYNC_BTN_TEST,
+        sync_field_is_bool, CategoryForm, EditorState, EditorView, HostForm, PendingDelete,
+        MENU_ITEMS, SYNC_BTN_SAVE, SYNC_BTN_SYNC, SYNC_BTN_TEST,
     },
     sync::SyncStatus,
     theme::{Theme, ACTIVE_GLYPH, INACTIVE_GLYPH},
@@ -474,43 +474,56 @@ fn draw_hints(frame: &mut Frame<'_>, app: &App, theme: &Theme, area: Rect) {
             h.push(("q", "Quit"));
             h
         }
-        Mode::Edit => match app.editor.as_ref().map(|e| e.view) {
-            Some(EditorView::Menu) => vec![("↑↓", "Move"), ("↩", "Select"), ("Esc", "Exit")],
-            Some(EditorView::Categories) => vec![
-                ("↑↓", "Move"),
-                ("↩", "Edit"),
-                ("a", "Add"),
-                ("d", "Delete"),
-                ("⌃s", "Save"),
-                ("Esc", "Back"),
-            ],
-            Some(EditorView::Hosts) => vec![
-                ("↑↓", "Move"),
-                ("Tab/⇧Tab", "± category"),
-                ("↩", "Edit"),
-                ("a", "Add"),
-                ("d", "Delete"),
-                ("⌃s", "Save"),
-                ("Esc", "Back"),
-            ],
-            Some(EditorView::CategoryForm) | Some(EditorView::HostForm) => {
-                vec![("↑↓", "Move"), ("↩", "Confirm"), ("Esc", "Cancel")]
+        Mode::Edit => {
+            if app
+                .editor
+                .as_ref()
+                .map(|e| e.pending_delete.is_some())
+                .unwrap_or(false)
+            {
+                vec![("y", "Yes"), ("n", "No"), ("Esc", "Cancel")]
+            } else {
+                match app.editor.as_ref().map(|e| e.view) {
+                    Some(EditorView::Menu) => {
+                        vec![("↑↓", "Move"), ("↩", "Select"), ("Esc", "Exit")]
+                    }
+                    Some(EditorView::Categories) => vec![
+                        ("↑↓", "Move"),
+                        ("↩", "Edit"),
+                        ("a", "Add"),
+                        ("d", "Delete"),
+                        ("⌃s", "Save"),
+                        ("Esc", "Back"),
+                    ],
+                    Some(EditorView::Hosts) => vec![
+                        ("↑↓", "Move"),
+                        ("Tab/⇧Tab", "± category"),
+                        ("↩", "Edit"),
+                        ("a", "Add"),
+                        ("d", "Delete"),
+                        ("⌃s", "Save"),
+                        ("Esc", "Back"),
+                    ],
+                    Some(EditorView::CategoryForm) | Some(EditorView::HostForm) => {
+                        vec![("↑↓", "Move"), ("↩", "Confirm"), ("Esc", "Cancel")]
+                    }
+                    Some(EditorView::Defaults) => vec![
+                        ("↑↓", "Move"),
+                        ("↩", "Apply"),
+                        ("⌃s", "Save"),
+                        ("Esc", "Back"),
+                    ],
+                    Some(EditorView::Sync) => vec![
+                        ("↑↓", "Move"),
+                        ("Space", "Toggle"),
+                        ("↩", "Apply / activate"),
+                        ("⌃s", "Save"),
+                        ("Esc", "Back"),
+                    ],
+                    None => vec![("Esc", "Back")],
+                }
             }
-            Some(EditorView::Defaults) => vec![
-                ("↑↓", "Move"),
-                ("↩", "Apply"),
-                ("⌃s", "Save"),
-                ("Esc", "Back"),
-            ],
-            Some(EditorView::Sync) => vec![
-                ("↑↓", "Move"),
-                ("Space", "Toggle"),
-                ("↩", "Apply / activate"),
-                ("⌃s", "Save"),
-                ("Esc", "Back"),
-            ],
-            None => vec![("Esc", "Back")],
-        },
+        }
     };
     let mut spans = Vec::with_capacity(hints.len() * 4);
     for (i, (key, label)) in hints.iter().enumerate() {
@@ -652,6 +665,9 @@ fn draw_editor(frame: &mut Frame<'_>, app: &App, theme: &Theme, area: Rect) {
     if editor.pending_exit {
         draw_pending_exit_modal(frame, theme, area);
     }
+    if editor.pending_delete.is_some() {
+        draw_pending_delete(frame, editor, theme, area);
+    }
 }
 
 fn draw_pending_exit_modal(frame: &mut Frame<'_>, theme: &Theme, area: Rect) {
@@ -690,6 +706,60 @@ fn draw_pending_exit_modal(frame: &mut Frame<'_>, theme: &Theme, area: Rect) {
         .alignment(Alignment::Center)
         .style(Style::default().bg(theme.surface));
     frame.render_widget(body, inner);
+}
+
+fn draw_pending_delete(frame: &mut Frame<'_>, editor: &EditorState, theme: &Theme, area: Rect) {
+    let Some(pending) = editor.pending_delete.as_ref() else {
+        return;
+    };
+    let prompt = match pending {
+        PendingDelete::Category { name } => format!("Delete category \"{name}\"?"),
+        PendingDelete::Host { host_name, .. } => format!("Delete host \"{host_name}\"?"),
+    };
+
+    let popup = centered_rect(50, 30, area);
+    frame.render_widget(Clear, popup);
+
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_type(BorderType::Thick)
+        .border_style(Style::default().fg(theme.warning).bg(theme.surface))
+        .style(Style::default().bg(theme.surface))
+        .title(Span::styled(
+            " Confirm delete ",
+            Style::default()
+                .fg(theme.warning)
+                .add_modifier(Modifier::BOLD),
+        ));
+
+    let body = Paragraph::new(vec![
+        Line::from(Span::styled(
+            prompt,
+            Style::default().fg(theme.text).add_modifier(Modifier::BOLD),
+        )),
+        Line::from(""),
+        Line::from(vec![
+            Span::styled(
+                "[y]",
+                Style::default()
+                    .fg(theme.primary_glow)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Span::styled(" Yes  ·  ", Style::default().fg(theme.text_dim)),
+            Span::styled(
+                "[n]",
+                Style::default()
+                    .fg(theme.primary_glow)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Span::styled(" No", Style::default().fg(theme.text_dim)),
+        ]),
+    ])
+    .alignment(Alignment::Center)
+    .wrap(Wrap { trim: true })
+    .block(block)
+    .style(Style::default().bg(theme.surface));
+    frame.render_widget(body, popup);
 }
 
 fn draw_menu(frame: &mut Frame<'_>, editor: &EditorState, theme: &Theme, area: Rect) {

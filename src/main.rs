@@ -40,8 +40,8 @@ use cli::{
 use config::{default_config_path, Category, Config, Host, Inventory};
 use editor::{
     sync_field_is_bool, sync_field_is_button, CategoryForm, EditorState, EditorView, HostForm,
-    MENU_ITEMS, SYNC_AUTO_PULL, SYNC_AUTO_PUSH, SYNC_BTN_SAVE, SYNC_BTN_SYNC, SYNC_BTN_TEST,
-    SYNC_ELEMENT_COUNT, SYNC_REPO,
+    PendingDelete, MENU_ITEMS, SYNC_AUTO_PULL, SYNC_AUTO_PUSH, SYNC_BTN_SAVE, SYNC_BTN_SYNC,
+    SYNC_BTN_TEST, SYNC_ELEMENT_COUNT, SYNC_REPO,
 };
 use favorites::FavoritesStore;
 use history::{default_history_path, HistoryStore};
@@ -423,6 +423,31 @@ fn handle_editor_event(app: &mut App, code: KeyCode, ctrl: bool) -> Result<bool>
         return Ok(false);
     }
 
+    // Resolving a pending delete must short-circuit normal key handling so
+    // that, for example, "j" doesn't both cancel the prompt and move the
+    // selection in the same tick.
+    if editor.pending_delete.is_some() {
+        match code {
+            KeyCode::Char('y') => {
+                if editor.confirm_delete(&mut app.config) {
+                    let msg = match editor.view {
+                        EditorView::Categories => "Category removed",
+                        EditorView::Hosts => "Host removed",
+                        _ => "Removed",
+                    };
+                    editor.flash(msg);
+                } else {
+                    editor.flash("Delete cancelled");
+                }
+            }
+            _ => {
+                editor.cancel_delete();
+                editor.flash("Delete cancelled");
+            }
+        }
+        return Ok(false);
+    }
+
     match editor.view {
         EditorView::Menu => match code {
             KeyCode::Esc => {
@@ -464,9 +489,11 @@ fn handle_editor_event(app: &mut App, code: KeyCode, ctrl: bool) -> Result<bool>
                 }
             }
             KeyCode::Char('d') if !app.config.categories.is_empty() => {
-                app.config.categories.remove(editor.categories_index);
-                editor.dirty = true;
-                editor.flash("Category removed");
+                if let Some(cat) = app.config.categories.get(editor.categories_index) {
+                    editor.request_delete(PendingDelete::Category {
+                        name: cat.name.clone(),
+                    });
+                }
             }
             KeyCode::Char('s') if ctrl && editor.dirty => save_config(app)?,
             _ => {}
@@ -527,11 +554,12 @@ fn handle_editor_event(app: &mut App, code: KeyCode, ctrl: bool) -> Result<bool>
                 }
             }
             KeyCode::Char('d') => {
-                if let Some(cat) = app.config.categories.get_mut(editor.categories_index) {
-                    if !cat.hosts.is_empty() {
-                        cat.hosts.remove(editor.hosts_index);
-                        editor.dirty = true;
-                        editor.flash("Host removed");
+                if let Some(cat) = app.config.categories.get(editor.categories_index) {
+                    if let Some(host) = cat.hosts.get(editor.hosts_index) {
+                        editor.request_delete(PendingDelete::Host {
+                            category_name: cat.name.clone(),
+                            host_name: host.name.clone(),
+                        });
                     }
                 }
             }
