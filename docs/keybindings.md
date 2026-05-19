@@ -5,7 +5,7 @@
 | key                  | action                                                      |
 | -------------------- | ----------------------------------------------------------- |
 | `Tab`                | Toggle focus between Categories ↔ Hosts                     |
-| `/`                  | Focus the search input                                      |
+| `/`                  | Focus the search input (always starts a fresh query)        |
 | `Esc`                | When in search: clear focus back to Hosts. Else: quit.      |
 | `q`                  | Quit                                                        |
 | `Ctrl+C`             | Quit (from any mode)                                        |
@@ -17,6 +17,7 @@
 | `Ctrl+A`             | Toggle global search (all categories vs. current only).     |
 | `e`                  | Open the in-TUI settings menu                               |
 | `Backspace`          | When in Search: delete a character                          |
+| `Ctrl+U`             | When in Search: clear the query (stays in search focus)     |
 
 ### Virtual categories
 

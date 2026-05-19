@@ -485,19 +485,53 @@ impl App {
 
     pub fn append_search_char(&mut self, ch: char) {
         self.search_query.push(ch);
-        self.hosts_state.select(Some(0));
-        self.ensure_valid_selection();
+        self.refresh_hosts_selection();
     }
 
     pub fn pop_search_char(&mut self) {
         self.search_query.pop();
-        self.hosts_state.select(Some(0));
-        self.ensure_valid_selection();
+        self.refresh_hosts_selection();
+    }
+
+    /// Wipe the query but stay in search focus so the user can keep typing
+    /// a fresh search. Bound to Ctrl+U in the TUI.
+    pub fn clear_search_query(&mut self) {
+        self.search_query.clear();
+        self.refresh_hosts_selection();
     }
 
     pub fn clear_search_focus_hosts(&mut self) {
         self.focus = Focus::Hosts;
         self.ensure_valid_selection();
+    }
+
+    /// After a query mutation, keep the selection on the previously selected
+    /// host if it survived the re-filter; otherwise fall back to index 0 (or
+    /// `None` when the result set is empty). Identity is by `(name, ip)`
+    /// since `Host` has no stable id.
+    fn refresh_hosts_selection(&mut self) {
+        let previous: Option<(String, String)> = self.hosts_state.selected().and_then(|idx| {
+            let hosts = self.filtered_hosts();
+            hosts
+                .get(idx)
+                .map(|fh| (fh.host.name.clone(), fh.host.ip.clone()))
+        });
+
+        let hosts = self.filtered_hosts();
+        if hosts.is_empty() {
+            self.hosts_state.select(None);
+            return;
+        }
+
+        let new_idx = previous
+            .as_ref()
+            .and_then(|(name, ip)| {
+                hosts
+                    .iter()
+                    .position(|fh| fh.host.name == *name && fh.host.ip == *ip)
+            })
+            .unwrap_or(0);
+        self.hosts_state.select(Some(new_idx));
     }
 
     pub fn enter_edit_mode(&mut self) {
@@ -691,6 +725,63 @@ mod tests {
             set_at: Instant::now(),
         };
         assert!(fresh.is_fresh());
+    }
+
+    #[test]
+    fn append_search_char_preserves_selection_when_match_still_visible() {
+        let config = Config {
+            defaults: Default::default(),
+            sync: None,
+            categories: vec![Category {
+                name: "infra".into(),
+                icon: None,
+                hosts: vec![
+                    Host {
+                        name: "alpha".into(),
+                        ip: "10.0.0.1".into(),
+                        ..Default::default()
+                    },
+                    Host {
+                        name: "beta".into(),
+                        ip: "10.0.0.2".into(),
+                        ..Default::default()
+                    },
+                    Host {
+                        name: "gamma".into(),
+                        ip: "10.0.0.3".into(),
+                        ..Default::default()
+                    },
+                ],
+            }],
+        };
+        let mut app = App::new(
+            config,
+            PathBuf::from("/tmp/x.yaml"),
+            SyncStatus::Disabled,
+            HistoryStore::default(),
+            FavoritesStore::default(),
+            TerminalLauncher::detect(None),
+        );
+        app.hosts_state.select(Some(2));
+
+        app.append_search_char('g');
+
+        assert_eq!(app.hosts_state.selected(), Some(0));
+        let hosts = app.filtered_hosts();
+        assert_eq!(hosts.len(), 1);
+        assert_eq!(hosts[0].host.name, "gamma");
+    }
+
+    #[test]
+    fn clear_search_query_wipes_query_and_keeps_focus_logic() {
+        let mut app = fixture();
+        app.focus_search();
+        app.append_search_char('g');
+        app.append_search_char('a');
+        assert_eq!(app.search_query, "ga");
+        app.clear_search_query();
+        assert!(app.search_query.is_empty());
+        assert!(matches!(app.focus, super::Focus::Search));
     }
 
     #[test]

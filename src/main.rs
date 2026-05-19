@@ -211,7 +211,18 @@ fn event_loop(terminal: &mut Terminal<CrosstermBackend<Stdout>>, app: &mut App) 
                 KeyCode::Esc | KeyCode::Char('q') if app.focus != Focus::Search => return Ok(()),
                 KeyCode::Esc if app.focus == Focus::Search => app.clear_search_focus_hosts(),
                 KeyCode::Tab => app.toggle_focus(),
-                KeyCode::Char('/') => app.focus_search(),
+                KeyCode::Char('/') => {
+                    // `/` always starts a fresh search: when re-entering from
+                    // another focus with a leftover query, wipe it first so
+                    // keystrokes don't append to stale text.
+                    if app.focus != Focus::Search && !app.search_query.is_empty() {
+                        app.clear_search_query();
+                    }
+                    app.focus_search();
+                }
+                KeyCode::Char('u') if ctrl && app.focus == Focus::Search => {
+                    app.clear_search_query();
+                }
                 KeyCode::Char('e') if app.focus != Focus::Search => app.enter_edit_mode(),
                 KeyCode::Up | KeyCode::Char('k') if app.focus != Focus::Search => app.previous(),
                 KeyCode::Down | KeyCode::Char('j') if app.focus != Focus::Search => app.next(),
