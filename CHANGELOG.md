@@ -1,3 +1,22 @@
+## v1.2.0 — 2026-05-19
+
+- feat(ui): add in-app help overlay (e7506b3)
+- feat(editor): add filter to categories and hosts lists (9da9568)
+- feat(editor): confirm destructive deletes in editor (b416171)
+- fix(editor): prompt before exiting with unsaved changes (5c127f8)
+- refactor(editor): unify Ctrl+S as the save shortcut (6ae210d)
+- feat(editor): inline field-level validation feedback in forms (9b95164)
+- feat(editor): support template ConnectCommand in HostForm (c8689b1)
+- feat(editor): clarify Sync form button semantics (b610ca0)
+- feat(ui): redundant glyphs for sync chip accessibility (9c80e95)
+- feat(ui): always advertise Ctrl+A global-search toggle (ed6292f)
+- feat(editor): expose defaults.terminal_command in Defaults form (4025fa3)
+- fix(search): preserve selection and reset query on re-entry (3318c38)
+- feat(ui): render sync auto_pull/auto_push as checkbox toggles (761e582)
+- feat(editor): clarify Tab semantics in Hosts editor view (6a20509)
+- feat(ui): add empty-state hints to categories, hosts, and search (9bebf2b)
+- chore: ignore .claude/ agent worktrees (a8960a7)
+
 ## v1.1.3 — 2026-05-18
 
 - Merge pull request #28 from Jaydee94/claude/improve-repo-sync-config-1KQKZ (6f9f521)
