@@ -11,7 +11,7 @@ use anyhow::{anyhow, Context, Result};
 use clap::CommandFactory;
 use clap_complete::generate;
 use crossterm::{
-    cursor::Show,
+    cursor::{SetCursorStyle, Show},
     event::{
         self, Event, KeyCode, KeyEventKind, KeyModifiers, KeyboardEnhancementFlags,
         PopKeyboardEnhancementFlags, PushKeyboardEnhancementFlags,
@@ -186,7 +186,14 @@ fn setup_terminal() -> Result<Terminal<CrosstermBackend<Stdout>>> {
 fn restore_terminal(mut terminal: Terminal<CrosstermBackend<Stdout>>) -> Result<()> {
     execute!(terminal.backend_mut(), PopKeyboardEnhancementFlags)?;
     disable_raw_mode()?;
-    execute!(terminal.backend_mut(), LeaveAlternateScreen)?;
+    // Restore the user's configured cursor shape (DECSCUSR 0). ratatui leaves
+    // the cursor as a steady block on some terminals; without this the shell
+    // hoppr returns to would inherit a non-blinking cursor. See issue #51.
+    execute!(
+        terminal.backend_mut(),
+        LeaveAlternateScreen,
+        SetCursorStyle::DefaultUserShape
+    )?;
     terminal.show_cursor()?;
     Ok(())
 }
@@ -321,8 +328,15 @@ fn ssh_handoff(terminal: &mut Terminal<CrosstermBackend<Stdout>>, app: &mut App)
     disable_raw_mode()?;
     // ratatui hides the cursor while rendering; re-show it so the inherited
     // ssh session starts with a visible cursor instead of inheriting DECTCEM
-    // off. See issue #46.
-    execute!(io::stdout(), LeaveAlternateScreen, Show)?;
+    // off (issue #46). Reset the cursor shape to the user's default (DECSCUSR
+    // 0) so the remote shell gets a blinking cursor rather than the steady
+    // block ratatui can leave behind (issue #51).
+    execute!(
+        io::stdout(),
+        LeaveAlternateScreen,
+        Show,
+        SetCursorStyle::DefaultUserShape
+    )?;
 
     let mut child = command
         .stdin(Stdio::inherit())
