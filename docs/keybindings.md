@@ -29,6 +29,17 @@ Two virtual categories appear at the top of the category list when they have con
 
 Both virtual categories support the normal search query and vim navigation.
 
+### Search behavior
+
+The search query is split on whitespace into terms. A host is kept only when
+**every** term is found (case-insensitively, as a substring) in **any** of the
+host's metadata fields — name, IP, category, user, and port. Each term may match
+a different field, so they combine as a logical AND across all of them.
+
+For example, `entw ap x86` keeps the hosts where `entw`, `ap`, and `x86` each
+appear somewhere in that host's combined metadata. An empty query matches
+everything. `Ctrl+A` widens the same matching across all categories at once.
+
 ## Edit mode (settings)
 
 Open with `e`. Esc returns to the previous screen.

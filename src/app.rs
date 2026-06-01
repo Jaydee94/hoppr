@@ -1,12 +1,10 @@
 //! Top-level application state for the TUI.
 
 use std::{
-    cmp::Reverse,
     path::PathBuf,
     time::{Duration, Instant},
 };
 
-use fuzzy_matcher::{skim::SkimMatcherV2, FuzzyMatcher};
 use ratatui::widgets::ListState;
 
 use crate::{
@@ -93,6 +91,34 @@ pub fn relative_time(elapsed: Duration) -> String {
     }
 }
 
+/// Multi-term filter: the query is split on whitespace and a host matches
+/// only when *every* term is found (case-insensitively, as a substring) in
+/// *any* of the host's metadata fields — name, ip, category, user and port.
+/// Each term may match a different field. An empty or all-whitespace query
+/// matches everything, preserving the "no filter" behavior.
+fn host_matches_query(host: &Host, category_name: &str, query: &str) -> bool {
+    if query.trim().is_empty() {
+        return true;
+    }
+    let mut haystack = format!(
+        "{} {} {}",
+        host.name.to_lowercase(),
+        host.ip.to_lowercase(),
+        category_name.to_lowercase()
+    );
+    if let Some(user) = &host.user {
+        haystack.push(' ');
+        haystack.push_str(&user.to_lowercase());
+    }
+    if let Some(port) = host.port {
+        haystack.push(' ');
+        haystack.push_str(&port.to_string());
+    }
+    query
+        .split_whitespace()
+        .all(|term| haystack.contains(&term.to_lowercase()))
+}
+
 /// A host together with the name of its originating category.
 /// Returned by [`App::filtered_hosts`] so callers always know which
 /// category a host belongs to (needed for global search and virtual views).
@@ -141,7 +167,6 @@ pub struct App {
     /// When `true`, the help overlay is drawn on top of everything and
     /// the event loop swallows every key except the close-help shortcuts.
     pub show_help: bool,
-    matcher: SkimMatcherV2,
 }
 
 impl App {
@@ -177,7 +202,6 @@ impl App {
             favorites,
             terminal,
             show_help: false,
-            matcher: SkimMatcherV2::default(),
         };
         app.ensure_valid_selection();
         app
@@ -271,30 +295,11 @@ impl App {
             return Vec::new();
         };
         let cat_name = category.name.as_str();
-        if self.search_query.trim().is_empty() {
-            return category
-                .hosts
-                .iter()
-                .map(|h| FilteredHost {
-                    host: h,
-                    category_name: cat_name,
-                })
-                .collect();
-        }
-        let mut scored: Vec<(i64, &Host)> = category
+        category
             .hosts
             .iter()
-            .filter_map(|host| {
-                let haystack = format!("{} {}", host.name, host.ip);
-                self.matcher
-                    .fuzzy_match(&haystack, &self.search_query)
-                    .map(|s| (s, host))
-            })
-            .collect();
-        scored.sort_by_key(|(s, _)| Reverse(*s));
-        scored
-            .into_iter()
-            .map(|(_, host)| FilteredHost {
+            .filter(|host| host_matches_query(host, cat_name, &self.search_query))
+            .map(|host| FilteredHost {
                 host,
                 category_name: cat_name,
             })
@@ -302,22 +307,13 @@ impl App {
     }
 
     fn search_all_categories(&self) -> Vec<FilteredHost<'_>> {
-        let categories = &self.config.categories;
         let q = &self.search_query;
-        let mut scored: Vec<(i64, &Host, &str)> = categories
+        self.config
+            .categories
             .iter()
             .flat_map(|cat| cat.hosts.iter().map(move |host| (cat.name.as_str(), host)))
-            .filter_map(|(cat_name, host)| {
-                let haystack = format!("{} {} {}", host.name, host.ip, cat_name);
-                self.matcher
-                    .fuzzy_match(&haystack, q)
-                    .map(|s| (s, host, cat_name))
-            })
-            .collect();
-        scored.sort_by_key(|(s, _, _)| Reverse(*s));
-        scored
-            .into_iter()
-            .map(|(_, host, category_name)| FilteredHost {
+            .filter(|(cat_name, host)| host_matches_query(host, cat_name, q))
+            .map(|(category_name, host)| FilteredHost {
                 host,
                 category_name,
             })
@@ -326,7 +322,7 @@ impl App {
 
     fn recent_hosts(&self) -> Vec<FilteredHost<'_>> {
         let categories = &self.config.categories;
-        let q = self.search_query.trim();
+        let q = &self.search_query;
         self.history
             .recent_default()
             .filter_map(|entry| {
@@ -335,11 +331,7 @@ impl App {
                         for host in &cat.hosts {
                             if host.name == entry.host_name
                                 && host.ip == entry.ip
-                                && (q.is_empty()
-                                    || self
-                                        .matcher
-                                        .fuzzy_match(&format!("{} {}", host.name, host.ip), q)
-                                        .is_some())
+                                && host_matches_query(host, &cat.name, q)
                             {
                                 return Some(FilteredHost {
                                     host,
@@ -356,16 +348,12 @@ impl App {
 
     fn starred_hosts(&self) -> Vec<FilteredHost<'_>> {
         let categories = &self.config.categories;
-        let q = self.search_query.trim();
+        let q = &self.search_query;
         let mut result = Vec::new();
         for cat in categories {
             for host in &cat.hosts {
                 if self.favorites.is_favorite(&cat.name, &host.name)
-                    && (q.is_empty()
-                        || self
-                            .matcher
-                            .fuzzy_match(&format!("{} {}", host.name, host.ip), q)
-                            .is_some())
+                    && host_matches_query(host, &cat.name, q)
                 {
                     result.push(FilteredHost {
                         host,
@@ -646,13 +634,76 @@ mod tests {
     }
 
     #[test]
-    fn fuzzy_filter_matches_name_and_ip() {
+    fn filter_matches_name_and_ip() {
         let mut app = fixture();
         app.search_query = "gate".into();
         assert_eq!(app.filtered_hosts().len(), 1);
 
         app.search_query = "192".into();
         assert_eq!(app.filtered_hosts()[0].host.name, "db");
+    }
+
+    #[test]
+    fn multi_term_and_matches_across_fields() {
+        let config = Config {
+            defaults: Default::default(),
+            sync: None,
+            categories: vec![Category {
+                name: "entw".into(),
+                icon: None,
+                hosts: vec![
+                    Host {
+                        name: "app-x86".into(),
+                        ip: "10.0.0.1".into(),
+                        user: Some("deploy".into()),
+                        port: Some(2222),
+                        cmd: None,
+                        command: None,
+                    },
+                    Host {
+                        name: "db".into(),
+                        ip: "10.0.0.2".into(),
+                        ..Default::default()
+                    },
+                ],
+            }],
+        };
+        let mut app = App::new(
+            config,
+            PathBuf::from("/tmp/x.yaml"),
+            SyncStatus::Disabled,
+            HistoryStore::default(),
+            FavoritesStore::default(),
+            TerminalLauncher::detect(None),
+        );
+
+        // "ap" matches the name, "entw" matches the category, "x86" matches the
+        // name — all three terms hit, in any field order.
+        app.search_query = "entw ap x86".into();
+        let hosts = app.filtered_hosts();
+        assert_eq!(hosts.len(), 1);
+        assert_eq!(hosts[0].host.name, "app-x86");
+
+        // Each term can match a different field independently.
+        app.search_query = "ap entw".into();
+        assert_eq!(app.filtered_hosts().len(), 1);
+
+        // A single non-matching term excludes the host even when the rest match.
+        app.search_query = "ap entw nope".into();
+        assert!(app.filtered_hosts().is_empty());
+
+        // Matching by user and port metadata.
+        app.search_query = "deploy 2222".into();
+        let hosts = app.filtered_hosts();
+        assert_eq!(hosts.len(), 1);
+        assert_eq!(hosts[0].host.name, "app-x86");
+    }
+
+    #[test]
+    fn empty_query_matches_everything() {
+        let mut app = fixture();
+        app.search_query = "   ".into();
+        assert_eq!(app.filtered_hosts().len(), 2);
     }
 
     #[test]
@@ -701,6 +752,13 @@ mod tests {
         app.search_all = true;
         app.search_query = "web".into();
         assert_eq!(app.filtered_hosts().len(), 2);
+
+        // Multi-term AND narrows by category name across the global view:
+        // "web" matches both names, "staging" only matches the second category.
+        app.search_query = "web staging".into();
+        let hosts = app.filtered_hosts();
+        assert_eq!(hosts.len(), 1);
+        assert_eq!(hosts[0].host.name, "web-02");
     }
 
     #[test]

@@ -11,6 +11,7 @@ use anyhow::{anyhow, Context, Result};
 use clap::CommandFactory;
 use clap_complete::generate;
 use crossterm::{
+    cursor::Show,
     event::{
         self, Event, KeyCode, KeyEventKind, KeyModifiers, KeyboardEnhancementFlags,
         PopKeyboardEnhancementFlags, PushKeyboardEnhancementFlags,
@@ -318,7 +319,10 @@ fn ssh_handoff(terminal: &mut Terminal<CrosstermBackend<Stdout>>, app: &mut App)
     let target = connection_target_label(&app.config, &host);
 
     disable_raw_mode()?;
-    execute!(io::stdout(), LeaveAlternateScreen)?;
+    // ratatui hides the cursor while rendering; re-show it so the inherited
+    // ssh session starts with a visible cursor instead of inheriting DECTCEM
+    // off. See issue #46.
+    execute!(io::stdout(), LeaveAlternateScreen, Show)?;
 
     let mut child = command
         .stdin(Stdio::inherit())

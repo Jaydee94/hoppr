@@ -38,7 +38,7 @@ If you SSH into more than a handful of machines, the same problems hit:
 - Your `~/.ssh/config` is a wall of `Host` blocks you scroll through every morning.
 - Your team has a doc somewhere with the right IPs, and nobody updates it.
 
-hoppr replaces all three: one YAML file (optionally git-synced for the team), one keystroke to launch the TUI, fuzzy search to find the host, `Enter` to connect.
+hoppr replaces all three: one YAML file (optionally git-synced for the team), one keystroke to launch the TUI, a quick search to find the host, `Enter` to connect.
 
 ## Install
 
@@ -74,7 +74,7 @@ In the TUI: `/` to search, `↑ ↓` to navigate, `Enter` to connect, `e` to edi
 ## Highlights
 
 - **Opens in < 50 ms.** Built on [ratatui](https://github.com/ratatui-org/ratatui), single static binary.
-- **Fuzzy search** across categories, with a global cross-category mode.
+- **Multi-term search** — type space-separated terms; a host matches only when every term is found across its metadata (name, IP, category, user, port). Includes a global cross-category mode.
 - **Edit in place** — add or rename hosts from inside the TUI, no shelling out to `$EDITOR`.
 - **Team inventory in git** — point at a private repo; hoppr clones, pulls on launch, pushes on demand.
 - **Favorites & history** — star the hosts you hop to often; the last 10 connections always sit at the top.
