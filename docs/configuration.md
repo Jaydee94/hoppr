@@ -112,7 +112,7 @@ For one-off connections that don't fit a template — e.g. jumping through a bas
 | field   | type   | required | notes                              |
 | ------- | ------ | -------- | ---------------------------------- |
 | `name`  | string | ✓        | Displayed verbatim.                |
-| `icon`  | string |          | Any character — emoji works fine.  |
+| `icon`  | string |          | Any character — emoji works fine. Rendered in a fixed two-column slot so names stay aligned. |
 | `hosts` | list   | ✓        | At least one to be useful.         |
 
 | host field | type    | required | notes                                  |
