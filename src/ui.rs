@@ -18,6 +18,7 @@ use ratatui::{
     widgets::{Block, BorderType, Borders, Clear, List, ListItem, Paragraph, Wrap},
     Frame,
 };
+use unicode_width::UnicodeWidthStr;
 
 use crate::{
     app::{relative_time, App, Focus, MessageKind, Mode, VirtualCategoryKind},
@@ -31,6 +32,34 @@ use crate::{
 };
 
 const LOGO: &str = "▄▄▄▄▄ ▄▄▄▄▄ ▄▄▄▄▄ ▄▄▄▄  ▄▄▄▄  ";
+
+/// Number of columns reserved for a category icon, separator excluded.
+const ICON_SLOT_WIDTH: usize = 2;
+
+/// Render a category icon into a fixed-width slot followed by a single
+/// separating space.
+///
+/// Emoji width is a perennial source of TUI misalignment: some glyphs (for
+/// example 🖥️, a desktop-computer codepoint plus a variation selector) are
+/// measured as a single column by the Unicode width tables while many
+/// terminals draw them two columns wide. Padding every icon to the same
+/// measured width keeps category names aligned and stops a narrow icon from
+/// gluing the following name to it (issue #52). A terminal that still draws
+/// an icon wider than its declared width can bleed by at most one column —
+/// that residual mismatch lives between the icon table and the terminal and
+/// cannot be fully papered over here.
+///
+/// Returns an empty string when the category has no icon so icon-less rows
+/// stay flush with the selection glyph.
+fn icon_slot(icon: Option<&str>) -> String {
+    match icon.map(str::trim).filter(|s| !s.is_empty()) {
+        Some(icon) => {
+            let pad = ICON_SLOT_WIDTH.saturating_sub(UnicodeWidthStr::width(icon));
+            format!("{icon}{} ", " ".repeat(pad))
+        }
+        None => String::new(),
+    }
+}
 
 pub fn draw(frame: &mut Frame<'_>, app: &mut App) {
     let theme = Theme::midnight();
@@ -259,8 +288,9 @@ fn build_categories<'a>(app: &'a App, theme: &Theme) -> List<'a> {
             };
 
             let mut spans = vec![Span::styled(prefix, Style::default().fg(theme.primary))];
-            if let Some(icon) = cat.icon {
-                spans.push(Span::raw(format!("{icon} ")));
+            let slot = icon_slot(cat.icon);
+            if !slot.is_empty() {
+                spans.push(Span::styled(slot, Style::default().fg(theme.text)));
             }
             spans.push(Span::styled(
                 cat.name.to_owned(),
@@ -953,10 +983,10 @@ fn draw_categories_editor(
             } else {
                 INACTIVE_GLYPH
             };
-            let icon = c.icon.as_deref().unwrap_or("");
             ListItem::new(Line::from(vec![
                 Span::styled(prefix, Style::default().fg(theme.primary)),
-                Span::raw(format!("{icon} {}", c.name)),
+                Span::raw(icon_slot(c.icon.as_deref())),
+                Span::raw(c.name.clone()),
                 Span::styled(
                     format!("  ({} hosts)", c.hosts.len()),
                     Style::default().fg(theme.text_muted),
@@ -1375,6 +1405,29 @@ mod tests {
         sync::SyncStatus,
         terminal::TerminalLauncher,
     };
+
+    #[test]
+    fn icon_slot_is_empty_without_icon() {
+        assert_eq!(super::icon_slot(None), "");
+        assert_eq!(super::icon_slot(Some("")), "");
+        assert_eq!(super::icon_slot(Some("   ")), "");
+    }
+
+    #[test]
+    fn icon_slot_pads_to_a_uniform_width() {
+        use unicode_width::UnicodeWidthStr;
+        // Regardless of the icon's own measured width (narrow ASCII, a wide
+        // emoji, or a variation-selector emoji), every populated slot occupies
+        // the same number of columns so category names line up. See issue #52.
+        for icon in ["A", "🚀", "🖥️", "🏠"] {
+            let slot = super::icon_slot(Some(icon));
+            assert_eq!(
+                UnicodeWidthStr::width(slot.as_str()),
+                super::ICON_SLOT_WIDTH + 1,
+                "icon {icon:?} produced an off-width slot {slot:?}"
+            );
+        }
+    }
 
     #[test]
     fn draw_renders_categories_and_hosts() {
