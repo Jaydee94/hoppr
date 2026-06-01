@@ -1,3 +1,9 @@
+## v1.2.2 — 2026-06-01
+
+- fix: blinking cursor on exit (#51) and fixed-width category icons (#52) (#53) (8810b0b)
+- fix(ui): render category icons in a fixed-width slot (7848dbc)
+- fix(tui): restore blinking cursor on exit and ssh handoff (ce36605)
+
 ## v1.2.1 — 2026-06-01
 
 - Merge pull request #50 from Jaydee94/claude/parallel-issues-IsN2a (2ac49fd)
