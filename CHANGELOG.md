@@ -1,3 +1,9 @@
+## v1.2.1 — 2026-06-01
+
+- Merge pull request #50 from Jaydee94/claude/parallel-issues-IsN2a (2ac49fd)
+- feat(search): match multiple whitespace-separated terms across host metadata (8c4bde2)
+- fix(connect): restore terminal cursor before handing off to ssh (492cd04)
+
 ## v1.2.0 — 2026-05-19
 
 - feat(ui): add in-app help overlay (e7506b3)
