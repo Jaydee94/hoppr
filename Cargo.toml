@@ -19,7 +19,7 @@ clap_complete = "4"
 crossterm = "0.29"
 directories = "6"
 fuzzy-matcher = "0.3"
-git2 = { version = "0.20", default-features = false, features = ["https", "ssh", "vendored-libgit2", "vendored-openssl"] }
+git2 = { version = "0.21", default-features = false, features = ["https", "ssh", "vendored-libgit2", "vendored-openssl"] }
 ratatui = "0.30"
 serde = { version = "1", features = ["derive"] }
 serde_yaml = "0.9"
