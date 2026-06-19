@@ -8,7 +8,7 @@ use std::{
 
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
-use time::{format_description, OffsetDateTime};
+use time::{macros::format_description, OffsetDateTime};
 
 use crate::config::project_dirs;
 
@@ -26,8 +26,7 @@ pub struct HistoryEntry {
 
 impl HistoryEntry {
     pub fn connected_at_display(&self) -> String {
-        let fmt =
-            format_description::parse("[year]-[month]-[day] [hour]:[minute]").unwrap_or_default();
+        let fmt = format_description!("[year]-[month]-[day] [hour]:[minute]");
         OffsetDateTime::from_unix_timestamp(self.connected_at)
             .ok()
             .and_then(|dt| dt.format(&fmt).ok())
