@@ -721,7 +721,6 @@ dependencies = [
  "serde_yaml",
  "shellexpand",
  "tempfile",
- "thiserror 2.0.21",
  "time",
  "unicode-width",
 ]
