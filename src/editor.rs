@@ -538,7 +538,7 @@ pub const MENU_ITEMS: &[(&str, EditorView)] = &[
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::config::Config;
+    use crate::config::{Config, Defaults};
 
     #[test]
     fn toggle_sync_bool_cycles_through_states() {
@@ -667,7 +667,7 @@ mod tests {
 
     fn config_with(categories: Vec<(&str, Vec<&str>)>) -> Config {
         Config {
-            defaults: Default::default(),
+            defaults: Defaults::default(),
             sync: None,
             categories: categories
                 .into_iter()

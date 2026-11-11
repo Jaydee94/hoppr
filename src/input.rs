@@ -39,6 +39,12 @@ enum Action {
     CloneIfMissing,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Step {
+    Back,
+    Forward,
+}
+
 pub fn handle_editor_key(app: &mut App, code: KeyCode, ctrl: bool) -> Result<Flow> {
     if ctrl && matches!(code, KeyCode::Char('c')) {
         return Ok(Flow::Quit);
@@ -121,23 +127,20 @@ fn handle_pending_exit(editor: &mut EditorState, code: KeyCode) -> Action {
 }
 
 fn handle_pending_delete(editor: &mut EditorState, config: &mut Config, code: KeyCode) {
-    match code {
-        KeyCode::Char('y') => {
-            if editor.confirm_delete(config) {
-                let msg = match editor.view {
-                    EditorView::Categories => "Category removed",
-                    EditorView::Hosts => "Host removed",
-                    _ => "Removed",
-                };
-                editor.flash(msg);
-            } else {
-                editor.flash("Delete cancelled");
-            }
-        }
-        _ => {
-            editor.cancel_delete();
-            editor.flash("Delete cancelled");
-        }
+    if code != KeyCode::Char('y') {
+        editor.cancel_delete();
+        editor.flash("Delete cancelled");
+        return;
+    }
+    if editor.confirm_delete(config) {
+        let msg = match editor.view {
+            EditorView::Categories => "Category removed",
+            EditorView::Hosts => "Host removed",
+            _ => "Removed",
+        };
+        editor.flash(msg);
+    } else {
+        editor.flash("Delete cancelled");
     }
 }
 
@@ -189,8 +192,8 @@ fn handle_categories(
                 editor.category_filter = Some(String::new());
             }
         }
-        KeyCode::Up | KeyCode::Char('k') => move_visible_category(editor, config, -1),
-        KeyCode::Down | KeyCode::Char('j') => move_visible_category(editor, config, 1),
+        KeyCode::Up | KeyCode::Char('k') => move_visible_category(editor, config, Step::Back),
+        KeyCode::Down | KeyCode::Char('j') => move_visible_category(editor, config, Step::Forward),
         KeyCode::Char('a') => {
             editor.category_form = Some(CategoryForm::new_create());
             editor.view = EditorView::CategoryForm;
@@ -251,8 +254,8 @@ fn handle_hosts(editor: &mut EditorState, config: &Config, code: KeyCode, ctrl: 
                 editor.host_filter = None;
             }
         }
-        KeyCode::Up | KeyCode::Char('k') => move_visible_host(editor, config, -1),
-        KeyCode::Down | KeyCode::Char('j') => move_visible_host(editor, config, 1),
+        KeyCode::Up | KeyCode::Char('k') => move_visible_host(editor, config, Step::Back),
+        KeyCode::Down | KeyCode::Char('j') => move_visible_host(editor, config, Step::Forward),
         KeyCode::Char('a') if !config.categories.is_empty() => {
             editor.host_form = Some(HostForm::new_create(editor.categories_index));
             editor.view = EditorView::HostForm;
@@ -507,38 +510,43 @@ fn handle_host_form(
     }
 }
 
-/// Move the categories selection by `delta` steps over the *visible*
+/// Move the categories selection one step over the *visible*
 /// (filtered) subset, then remap the resulting position back to the
 /// original `categories_index`. Without the remap a delete/edit would
 /// target the wrong row whenever a filter is active.
-fn move_visible_category(editor: &mut EditorState, config: &Config, delta: i32) {
+fn move_visible_category(editor: &mut EditorState, config: &Config, step: Step) {
     let visible = editor.visible_categories(config);
-    if visible.is_empty() {
-        return;
+    if let Some(index) = step_visible(&visible, editor.categories_index, step) {
+        editor.categories_index = index;
     }
-    let current_pos = visible
-        .iter()
-        .position(|(i, _)| *i == editor.categories_index)
-        .unwrap_or(0);
-    let len = visible.len() as i32;
-    let next = ((current_pos as i32 + delta).rem_euclid(len)) as usize;
-    editor.categories_index = visible[next].0;
 }
 
 /// Same as `move_visible_category` but for hosts inside the currently
 /// selected category.
-fn move_visible_host(editor: &mut EditorState, config: &Config, delta: i32) {
+fn move_visible_host(editor: &mut EditorState, config: &Config, step: Step) {
     let visible = editor.visible_hosts(config);
-    if visible.is_empty() {
-        return;
+    if let Some(index) = step_visible(&visible, editor.hosts_index, step) {
+        editor.hosts_index = index;
     }
-    let current_pos = visible
+}
+
+/// Original index of the entry one `step` away from `current` in a
+/// filtered `(original index, item)` list, wrapping at both ends. `None`
+/// when nothing is visible.
+fn step_visible<T>(visible: &[(usize, T)], current: usize, step: Step) -> Option<usize> {
+    let len = visible.len();
+    if len == 0 {
+        return None;
+    }
+    let pos = visible
         .iter()
-        .position(|(i, _)| *i == editor.hosts_index)
+        .position(|(index, _)| *index == current)
         .unwrap_or(0);
-    let len = visible.len() as i32;
-    let next = ((current_pos as i32 + delta).rem_euclid(len)) as usize;
-    editor.hosts_index = visible[next].0;
+    let next = match step {
+        Step::Back => (pos + len - 1) % len,
+        Step::Forward => (pos + 1) % len,
+    };
+    Some(visible[next].0)
 }
 
 fn handle_category_filter_input(editor: &mut EditorState, config: &Config, code: KeyCode) {

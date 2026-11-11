@@ -1,5 +1,6 @@
 use std::{
     cmp::Reverse,
+    fmt::Write as _,
     io::{self, Stdout, Write},
     path::{Path, PathBuf},
     process::{Command, Stdio},
@@ -59,11 +60,11 @@ fn main() -> Result<()> {
             generate(shell, &mut cmd, "hoppr", &mut io::stdout());
             Ok(())
         }
-        Some(CliCommand::Config(sub)) => run_config_cmd(sub, &config_path),
+        Some(CliCommand::Config(sub)) => run_config_cmd(&sub, &config_path),
         Some(CliCommand::Sync(sub)) => run_sync_cmd(sub, &config_path),
         Some(CliCommand::List(args)) => {
             let (cfg, _) = load_with_sync(&cli, &config_path)?;
-            run_list(args, &cfg)
+            run_list(&args, &cfg)
         }
         Some(CliCommand::Connect(args)) => {
             let (cfg, _) = load_with_sync(&cli, &config_path)?;
@@ -71,7 +72,7 @@ fn main() -> Result<()> {
         }
         Some(CliCommand::History(args)) => {
             let history = HistoryStore::load(&default_history_path());
-            run_history(args, &history)
+            run_history(&args, &history)
         }
         Some(CliCommand::Tui) | None => {
             let (cfg, status) = load_with_sync(&cli, &config_path)?;
@@ -196,7 +197,7 @@ fn event_loop(terminal: &mut Terminal<CrosstermBackend<Stdout>>, app: &mut App) 
 
         if app.show_help {
             match key.code {
-                KeyCode::Char('?') | KeyCode::F(1) | KeyCode::Esc | KeyCode::Char('q') => {
+                KeyCode::Char('?' | 'q') | KeyCode::F(1) | KeyCode::Esc => {
                     app.show_help = false;
                 }
                 _ => {}
@@ -228,7 +229,9 @@ fn handle_browse_key(
     match code {
         KeyCode::Char('c') if ctrl => return Ok(Flow::Quit),
         KeyCode::Esc | KeyCode::Char('q') if app.focus != Focus::Search => return Ok(Flow::Quit),
-        KeyCode::Esc if app.focus == Focus::Search => app.clear_search_focus_hosts(),
+        KeyCode::Esc | KeyCode::Enter if app.focus == Focus::Search => {
+            app.clear_search_focus_hosts();
+        }
         KeyCode::Tab => app.toggle_focus(),
         KeyCode::Char('/') => {
             // `/` always starts a fresh search: when re-entering from
@@ -246,7 +249,6 @@ fn handle_browse_key(
         KeyCode::Up | KeyCode::Char('k') if app.focus != Focus::Search => app.previous(),
         KeyCode::Down | KeyCode::Char('j') if app.focus != Focus::Search => app.next(),
         KeyCode::Backspace if app.focus == Focus::Search => app.pop_search_char(),
-        KeyCode::Enter if app.focus == Focus::Search => app.clear_search_focus_hosts(),
         KeyCode::Char('a') if ctrl => toggle_search_scope(app),
         KeyCode::Char(c) if app.focus == Focus::Search => app.append_search_char(c),
         KeyCode::Char('f') if app.focus == Focus::Hosts => toggle_favorite(app),
@@ -296,7 +298,7 @@ fn help_toggle_allowed(app: &App) -> bool {
         Mode::Browse => app.focus != Focus::Search,
         Mode::Edit => matches!(
             app.editor.as_ref().map(|e| e.view),
-            Some(EditorView::Menu) | Some(EditorView::Categories) | Some(EditorView::Hosts)
+            Some(EditorView::Menu | EditorView::Categories | EditorView::Hosts)
         ),
     }
 }
@@ -424,7 +426,7 @@ fn ssh_spawn(app: &mut App) {
 
 // ─── headless subcommands ───────────────────────────────────────────────────
 
-fn run_config_cmd(cmd: ConfigCmd, config_path: &Path) -> Result<()> {
+fn run_config_cmd(cmd: &ConfigCmd, config_path: &Path) -> Result<()> {
     match cmd {
         ConfigCmd::Path => {
             println!("{}", config_path.display());
@@ -452,7 +454,7 @@ fn run_config_cmd(cmd: ConfigCmd, config_path: &Path) -> Result<()> {
             }
         }
         ConfigCmd::Init { force } => {
-            if config_path.exists() && !force {
+            if config_path.exists() && !*force {
                 return Err(anyhow!(
                     "config already exists at {} — pass --force to overwrite",
                     config_path.display()
@@ -511,7 +513,7 @@ fn run_sync_cmd(cmd: SyncCmd, config_path: &Path) -> Result<()> {
             let branch = sync::current_branch(&ctx).unwrap_or_else(|_| "?".into());
             let dirty = sync::has_uncommitted_changes(&ctx).unwrap_or(false);
             println!("repo:   {}", ctx.safe_url());
-            println!("branch: {}", branch);
+            println!("branch: {branch}");
             println!("local:  {}", ctx.local_clone.display());
             println!("dirty:  {dirty}");
         }
@@ -519,7 +521,7 @@ fn run_sync_cmd(cmd: SyncCmd, config_path: &Path) -> Result<()> {
     Ok(())
 }
 
-fn run_list(args: ListArgs, config: &Config) -> Result<()> {
+fn run_list(args: &ListArgs, config: &Config) -> Result<()> {
     let categories: Vec<&Category> = config
         .categories
         .iter()
@@ -552,12 +554,12 @@ fn run_list(args: ListArgs, config: &Config) -> Result<()> {
                 if i > 0 {
                     out.push(',');
                 }
-                out.push_str(&format!("{{\"name\":{:?},\"hosts\":[", c.name));
+                write!(out, "{{\"name\":{:?},\"hosts\":[", c.name)?;
                 for (j, h) in c.hosts.iter().enumerate() {
                     if j > 0 {
                         out.push(',');
                     }
-                    out.push_str(&format!("{{\"name\":{:?},\"ip\":{:?}}}", h.name, h.ip));
+                    write!(out, "{{\"name\":{:?},\"ip\":{:?}}}", h.name, h.ip)?;
                 }
                 out.push_str("]}");
             }
@@ -583,7 +585,7 @@ fn run_list(args: ListArgs, config: &Config) -> Result<()> {
     Ok(())
 }
 
-fn run_history(args: HistoryArgs, history: &HistoryStore) -> Result<()> {
+fn run_history(args: &HistoryArgs, history: &HistoryStore) -> Result<()> {
     let entries: Vec<_> = history.recent(args.limit).collect();
 
     match args.format {
@@ -616,13 +618,14 @@ fn run_history(args: HistoryArgs, history: &HistoryStore) -> Result<()> {
                 if i > 0 {
                     out.push(',');
                 }
-                out.push_str(&format!(
+                write!(
+                    out,
                     "{{\"host\":{:?},\"ip\":{:?},\"category\":{:?},\"connected_at\":{:?}}}",
                     e.host_name,
                     e.ip,
                     e.category,
                     e.connected_at_display()
-                ));
+                )?;
             }
             out.push(']');
             println!("{out}");
@@ -657,14 +660,14 @@ fn truncate(input: &str, max: usize) -> String {
 fn run_connect(args: ConnectArgs, config: &Config) -> Result<()> {
     let host = find_host(config, &args.query)
         .ok_or_else(|| anyhow!("no host matched query: {}", args.query))?;
-    let mut effective = host.clone();
-    if let Some(user) = args.user.clone() {
+    let mut effective = host;
+    if let Some(user) = args.user {
         effective.user = Some(user);
     }
     if let Some(port) = args.port {
         effective.port = Some(port);
     }
-    if let Some(cmd) = args.command.clone() {
+    if let Some(cmd) = args.command {
         effective.command = Some(config::ConnectCommand::Program(cmd));
     }
 

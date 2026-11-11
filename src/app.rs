@@ -571,7 +571,7 @@ mod tests {
     use std::path::PathBuf;
 
     use crate::{
-        config::{Category, Config, Host},
+        config::{Category, Config, Defaults, Host},
         favorites::FavoritesStore,
         history::HistoryStore,
         sync::SyncStatus,
@@ -582,7 +582,7 @@ mod tests {
 
     fn fixture() -> App {
         let config = Config {
-            defaults: Default::default(),
+            defaults: Defaults::default(),
             sync: None,
             categories: vec![Category {
                 name: "infra".into(),
@@ -630,7 +630,7 @@ mod tests {
     #[test]
     fn multi_term_and_matches_across_fields() {
         let config = Config {
-            defaults: Default::default(),
+            defaults: Defaults::default(),
             sync: None,
             categories: vec![Category {
                 name: "entw".into(),
@@ -702,7 +702,7 @@ mod tests {
     #[test]
     fn global_search_finds_across_categories() {
         let config = Config {
-            defaults: Default::default(),
+            defaults: Defaults::default(),
             sync: None,
             categories: vec![
                 Category {
@@ -780,7 +780,7 @@ mod tests {
     #[test]
     fn append_search_char_preserves_selection_when_match_still_visible() {
         let config = Config {
-            defaults: Default::default(),
+            defaults: Defaults::default(),
             sync: None,
             categories: vec![Category {
                 name: "infra".into(),
@@ -843,7 +843,7 @@ mod tests {
         favs.toggle("infra", "gateway");
 
         let config = Config {
-            defaults: Default::default(),
+            defaults: Defaults::default(),
             sync: None,
             categories: vec![Category {
                 name: "infra".into(),

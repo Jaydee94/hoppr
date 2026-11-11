@@ -469,7 +469,7 @@ fn sync_chip(app: &App, theme: &Theme) -> Line<'static> {
 
 /// Compose the middle slot:
 ///   1. when a search query narrows the list, prefix with a
-///      `filter: "q"` chip (or `global: "q"` when search_all is on);
+///      `filter: "q"` chip (or `global: "q"` when `search_all` is on);
 ///   2. then either the active (un-faded) status message with its
 ///      severity glyph + color, or the resolved connection command of
 ///      the currently selected host as a default.

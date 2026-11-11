@@ -81,8 +81,7 @@ impl TerminalLauncher {
                 Command::new("osascript")
                     .arg("-e")
                     .arg(format!(
-                        "tell application \"Terminal\" to do script \"{}\"",
-                        cmd_str
+                        "tell application \"Terminal\" to do script \"{cmd_str}\""
                     ))
                     .spawn()?;
             }
@@ -92,8 +91,7 @@ impl TerminalLauncher {
                     .arg("-e")
                     .arg(format!(
                         "tell application \"iTerm\" to create window with default profile \
-                         command \"{}\"",
-                        cmd_str
+                         command \"{cmd_str}\""
                     ))
                     .spawn()?;
             }
@@ -121,9 +119,7 @@ impl TerminalLauncher {
 }
 
 fn is_wsl() -> bool {
-    std::fs::read_to_string("/proc/version")
-        .map(|v| v.to_lowercase().contains("microsoft"))
-        .unwrap_or(false)
+    std::fs::read_to_string("/proc/version").is_ok_and(|v| v.to_lowercase().contains("microsoft"))
 }
 
 fn detect_backend() -> Option<Backend> {

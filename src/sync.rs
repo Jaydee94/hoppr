@@ -49,8 +49,7 @@ impl SyncContext {
             local_clone: sync
                 .local
                 .as_deref()
-                .map(expand_path)
-                .unwrap_or_else(default_sync_local),
+                .map_or_else(default_sync_local, expand_path),
             auto_pull: sync.auto_pull.unwrap_or(true),
         })
     }
@@ -112,7 +111,7 @@ pub enum SyncStatus {
 /// SSH is a two-round flow: libgit2 first asks for the *username*
 /// (separate from the credential), then for the actual key. USERNAME
 /// requests are idempotent — libgit2 may legitimately ask for it more
-/// than once across a single operation (e.g. test_connection on some
+/// than once across a single operation (e.g. `test_connection` on some
 /// libssh2 builds), so we just keep answering. The *real credential*
 /// round is gated: a second invocation means our creds were rejected
 /// and we bail out instead of spinning forever.
@@ -141,12 +140,12 @@ fn make_auth_callbacks() -> RemoteCallbacks<'static> {
 impl SyncStatus {
     pub fn label(self) -> &'static str {
         match self {
-            SyncStatus::Disabled => "sync off",
-            SyncStatus::UpToDate => "sync ok",
-            SyncStatus::Pulled => "pulled",
-            SyncStatus::PulledWithChanges => "pulled +",
-            SyncStatus::Skipped => "sync skipped",
-            SyncStatus::Failed => "sync error",
+            Self::Disabled => "sync off",
+            Self::UpToDate => "sync ok",
+            Self::Pulled => "pulled",
+            Self::PulledWithChanges => "pulled +",
+            Self::Skipped => "sync skipped",
+            Self::Failed => "sync error",
         }
     }
 }
