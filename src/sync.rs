@@ -32,8 +32,6 @@ pub struct SyncContext {
     pub file_in_repo: String,
     pub local_clone: PathBuf,
     pub auto_pull: bool,
-    #[allow(dead_code)]
-    pub auto_push: bool,
 }
 
 impl SyncContext {
@@ -54,7 +52,6 @@ impl SyncContext {
                 .map(expand_path)
                 .unwrap_or_else(default_sync_local),
             auto_pull: sync.auto_pull.unwrap_or(true),
-            auto_push: sync.auto_push.unwrap_or(false),
         })
     }
 
