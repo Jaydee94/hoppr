@@ -82,7 +82,7 @@ All commits, code comments, docs, error messages and PR descriptions are written
 
 - `anyhow::Result` at boundaries (CLI entry points, sync operations).
 - `Context::context` is mandatory when surfacing a filesystem or git operation — the user needs to see *which path* / *which remote* failed.
-- Inside library-style modules (`connect.rs`, `config.rs`), prefer specific `thiserror` enums only when callers need to match — otherwise `anyhow` is fine since this is a binary crate.
+- Inside library-style modules (`connect.rs`, `config.rs`), prefer a specific error enum only when callers need to match — otherwise `anyhow` is fine since this is a binary crate. (`thiserror` is not a dependency; add it only together with the first such enum.)
 
 ### TUI
 
@@ -123,7 +123,7 @@ Never push to a release branch directly — open a PR, get it merged into `main`
 ## Files Claude should treat as guardrails
 
 - `commitlint.config.cjs` — commit message rules
-- `rust-toolchain.toml` — pinned toolchain
+- `rust-toolchain.toml` — toolchain channel (`stable`) and components
 - `.github/workflows/*.yml` — CI + release surface
 
 Modifying these files requires the matching update to `docs/development.md`.

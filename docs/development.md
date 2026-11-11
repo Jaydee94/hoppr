@@ -42,13 +42,14 @@ cargo run -- sync push -m "init"
 
 ## Commits
 
-Conventional Commits **only**. See [`CONTRIBUTING.md`](../CONTRIBUTING.md). The `commit-msg` hook (from `commitlint`) enforces this when you have Node installed locally:
+Conventional Commits **only**. See [`CONTRIBUTING.md`](../CONTRIBUTING.md). The rules live in [`commitlint.config.cjs`](../commitlint.config.cjs).
+
+There is no local `commit-msg` hook. The `commitlint` job in CI lints every commit of a pull request (base..head), so a single non-conforming commit fails the PR — the PR title itself is not checked. To run the same check locally before pushing (optional, needs Node):
 
 ```bash
-npm install                    # installs husky + commitlint hooks
+npm install                               # installs commitlint
+npx commitlint --from=origin/main         # lint the commits on your branch
 ```
-
-(Optional — CI will reject non-conforming PR titles either way.)
 
 ## Release process
 
