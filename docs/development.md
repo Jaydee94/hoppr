@@ -2,7 +2,7 @@
 
 ## Toolchain
 
-`hoppr` pins its toolchain in [`rust-toolchain.toml`](../rust-toolchain.toml). Anything ≥ 1.75 should work locally, but CI uses the pinned channel.
+[`rust-toolchain.toml`](../rust-toolchain.toml) selects the `stable` channel (plus `rustfmt` and `clippy`) for both local builds and CI — it tracks the latest stable release rather than pinning a version. The minimum supported Rust version is **1.88**, the highest `rust-version` declared by a dependency (`ratatui` 0.30 and `time` 0.3); it is recorded as `rust-version` in `Cargo.toml`.
 
 ```bash
 rustup show                   # confirm the channel is installed

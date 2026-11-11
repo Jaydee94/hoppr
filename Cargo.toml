@@ -10,7 +10,7 @@ documentation = "https://github.com/Jaydee94/hoppr#readme"
 readme = "README.md"
 keywords = ["ssh", "tui", "terminal", "launcher", "ratatui"]
 categories = ["command-line-utilities"]
-rust-version = "1.75"
+rust-version = "1.88"
 
 [dependencies]
 anyhow = "1"
