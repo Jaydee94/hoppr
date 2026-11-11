@@ -20,8 +20,7 @@ use std::{
 
 use anyhow::{anyhow, Context, Result};
 use git2::{
-    AnnotatedCommit, BranchType, Cred, FetchOptions, ObjectType, PushOptions, RemoteCallbacks,
-    Repository, Signature,
+    AnnotatedCommit, Cred, FetchOptions, PushOptions, RemoteCallbacks, Repository, Signature,
 };
 
 use crate::config::{default_sync_local, SyncConfig};
@@ -508,27 +507,6 @@ pub fn has_uncommitted_changes(ctx: &SyncContext) -> Result<bool> {
     Ok(statuses
         .iter()
         .any(|s| !s.status().is_ignored() && s.status() != git2::Status::CURRENT))
-}
-
-#[allow(dead_code)]
-pub fn checkout_branch(ctx: &SyncContext) -> Result<()> {
-    let repo = Repository::open(&ctx.local_clone)?;
-    let _ = repo.find_branch(&ctx.branch, BranchType::Local)?;
-    let obj = repo.revparse_single(&format!("refs/heads/{}", ctx.branch))?;
-    repo.checkout_tree(&obj, None)?;
-    repo.set_head(&format!("refs/heads/{}", ctx.branch))?;
-    Ok(())
-}
-
-#[allow(dead_code)]
-fn object_kind_label(kind: Option<ObjectType>) -> &'static str {
-    match kind {
-        Some(ObjectType::Commit) => "commit",
-        Some(ObjectType::Tree) => "tree",
-        Some(ObjectType::Blob) => "blob",
-        Some(ObjectType::Tag) => "tag",
-        _ => "?",
-    }
 }
 
 #[cfg(test)]

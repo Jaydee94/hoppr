@@ -129,12 +129,6 @@ pub struct Host {
 }
 
 impl Config {
-    #[allow(dead_code)]
-    pub fn load() -> Result<Self> {
-        let path = default_config_path();
-        Self::load_or_default(&path)
-    }
-
     pub fn load_or_default(path: &Path) -> Result<Self> {
         if !path.exists() {
             return Ok(Self::default());

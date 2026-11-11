@@ -31,8 +31,6 @@ use crate::{
     theme::{Theme, ACTIVE_GLYPH, INACTIVE_GLYPH},
 };
 
-const LOGO: &str = "▄▄▄▄▄ ▄▄▄▄▄ ▄▄▄▄▄ ▄▄▄▄  ▄▄▄▄  ";
-
 /// Number of columns reserved for a category icon, separator excluded.
 const ICON_SLOT_WIDTH: usize = 2;
 
@@ -153,7 +151,6 @@ fn draw_header(frame: &mut Frame<'_>, app: &App, theme: &Theme, area: Rect) {
         .style(theme.base())
         .block(block("Search", search_active, theme));
     frame.render_widget(search, split[1]);
-    let _ = LOGO; // retained as a fallback for unicode-poor terminals
 }
 
 fn draw_body(frame: &mut Frame<'_>, app: &mut App, theme: &Theme, area: Rect) {

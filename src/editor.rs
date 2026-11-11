@@ -18,12 +18,6 @@ pub enum EditorView {
     Sync,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum FormMode {
-    Create,
-    Update,
-}
-
 #[derive(Debug, Default, Clone)]
 pub struct HostForm {
     pub mode_create: bool,
@@ -547,11 +541,6 @@ pub const MENU_ITEMS: &[(&str, EditorView)] = &[
     ("Connection defaults", EditorView::Defaults),
     ("Central repo sync", EditorView::Sync),
 ];
-
-#[allow(dead_code)]
-pub const FORM_MODE_CREATE: FormMode = FormMode::Create;
-#[allow(dead_code)]
-pub const FORM_MODE_UPDATE: FormMode = FormMode::Update;
 
 #[cfg(test)]
 mod tests {

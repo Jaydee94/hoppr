@@ -365,14 +365,6 @@ impl App {
         result
     }
 
-    #[allow(dead_code)]
-    pub fn selected_host(&self) -> Option<&Host> {
-        let hosts = self.filtered_hosts();
-        self.hosts_state
-            .selected()
-            .and_then(|idx| hosts.get(idx).map(|fh| fh.host))
-    }
-
     /// Returns the selected host together with its category name. Needed to
     /// record history and toggle favorites without a second scan.
     pub fn selected_host_with_category(&self) -> Option<(&Host, &str)> {

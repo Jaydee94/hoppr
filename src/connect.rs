@@ -10,7 +10,7 @@
 
 use std::{env, process::Command};
 
-use crate::config::{Config, ConnectCommand, Host};
+use crate::config::{Config, Host};
 
 pub fn build_command(config: &Config, host: &Host) -> Command {
     if let Some(cmd) = host.cmd.as_deref() {
@@ -127,19 +127,10 @@ pub fn describe(config: &Config, host: &Host) -> String {
     }
 }
 
-#[allow(dead_code)]
-pub fn supports_template(template: &ConnectCommand) -> bool {
-    template.args().is_some()
-        || matches!(
-            template.program(),
-            "ssh" | "autossh" | "mosh" | "telnet" | "rsh" | "et"
-        )
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::config::Category;
+    use crate::config::{Category, ConnectCommand};
 
     fn make_config(default: ConnectCommand) -> Config {
         Config {
