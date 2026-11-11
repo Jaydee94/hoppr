@@ -29,6 +29,7 @@ mod connect;
 mod editor;
 mod favorites;
 mod history;
+mod storage;
 mod sync;
 mod terminal;
 mod theme;

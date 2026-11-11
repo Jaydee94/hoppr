@@ -4,14 +4,13 @@
 //! the file in a central git repository (see [`crate::sync`]). The same struct is
 //! also used by the in-app settings editor.
 
-use std::{
-    fs,
-    path::{Path, PathBuf},
-};
+use std::path::{Path, PathBuf};
 
-use anyhow::{Context, Result};
+use anyhow::Result;
 use directories::ProjectDirs;
 use serde::{Deserialize, Serialize};
+
+use crate::storage::{self, Access};
 
 const QUALIFIER: &str = "dev";
 const ORG: &str = "hoppr";
@@ -137,41 +136,13 @@ impl Config {
     }
 
     pub fn load_from_path<P: AsRef<Path>>(path: P) -> Result<Self> {
-        let path = path.as_ref();
-        let content = fs::read_to_string(path)
-            .with_context(|| format!("failed to read config file: {}", path.display()))?;
-
-        if content.trim().is_empty() {
-            return Ok(Self::default());
-        }
-
-        yaml_serde::from_str::<Self>(&content)
-            .with_context(|| format!("invalid YAML in config file: {}", path.display()))
+        storage::load_yaml(path.as_ref(), "config")
     }
 
+    /// Written owner-only: the file can hold a `sync.repo` URL with an
+    /// embedded token.
     pub fn save(&self, path: &Path) -> Result<()> {
-        if let Some(parent) = path.parent() {
-            fs::create_dir_all(parent)
-                .with_context(|| format!("failed to create config dir: {}", parent.display()))?;
-        }
-        let yaml = yaml_serde::to_string(self).context("failed to serialize config")?;
-
-        // Atomic write: stage in a sibling tempfile, then rename. This avoids
-        // truncating the user's config if hoppr crashes mid-write.
-        let parent = path.parent().unwrap_or_else(|| Path::new("."));
-        let file_name = path
-            .file_name()
-            .map(|n| n.to_owned())
-            .unwrap_or_else(|| std::ffi::OsString::from("config.yaml"));
-        let mut tmp = parent.join(&file_name);
-        tmp.as_mut_os_string().push(".tmp");
-
-        fs::write(&tmp, yaml)
-            .with_context(|| format!("failed to stage config file: {}", tmp.display()))?;
-        restrict_perms(&tmp).ok();
-        fs::rename(&tmp, path)
-            .with_context(|| format!("failed to write config file: {}", path.display()))?;
-        Ok(())
+        storage::save_yaml(path, self, "config", Access::OwnerOnly)
     }
 
     pub fn sync_enabled(&self) -> bool {
@@ -206,39 +177,11 @@ pub struct Inventory {
 
 impl Inventory {
     pub fn load_from_path<P: AsRef<Path>>(path: P) -> Result<Self> {
-        let path = path.as_ref();
-        let content = fs::read_to_string(path)
-            .with_context(|| format!("failed to read inventory file: {}", path.display()))?;
-
-        if content.trim().is_empty() {
-            return Ok(Self::default());
-        }
-
-        yaml_serde::from_str::<Self>(&content)
-            .with_context(|| format!("invalid YAML in inventory file: {}", path.display()))
+        storage::load_yaml(path.as_ref(), "inventory")
     }
 
     pub fn save_to_path<P: AsRef<Path>>(&self, path: P) -> Result<()> {
-        let path = path.as_ref();
-        if let Some(parent) = path.parent() {
-            fs::create_dir_all(parent)
-                .with_context(|| format!("failed to create inventory dir: {}", parent.display()))?;
-        }
-        let yaml = yaml_serde::to_string(self).context("failed to serialize inventory")?;
-
-        let parent = path.parent().unwrap_or_else(|| Path::new("."));
-        let file_name = path
-            .file_name()
-            .map(|n| n.to_owned())
-            .unwrap_or_else(|| std::ffi::OsString::from("inventory.yaml"));
-        let mut tmp = parent.join(&file_name);
-        tmp.as_mut_os_string().push(".tmp");
-
-        fs::write(&tmp, yaml)
-            .with_context(|| format!("failed to stage inventory file: {}", tmp.display()))?;
-        fs::rename(&tmp, path)
-            .with_context(|| format!("failed to write inventory file: {}", path.display()))?;
-        Ok(())
+        storage::save_yaml(path.as_ref(), self, "inventory", Access::Inherit)
     }
 }
 
@@ -251,19 +194,6 @@ pub fn default_config_path() -> PathBuf {
         return dirs.config_dir().join("config.yaml");
     }
     PathBuf::from("config.yaml")
-}
-
-#[cfg(unix)]
-fn restrict_perms(path: &Path) -> std::io::Result<()> {
-    use std::os::unix::fs::PermissionsExt;
-    let mut perms = fs::metadata(path)?.permissions();
-    perms.set_mode(0o600);
-    fs::set_permissions(path, perms)
-}
-
-#[cfg(not(unix))]
-fn restrict_perms(_path: &Path) -> std::io::Result<()> {
-    Ok(())
 }
 
 pub fn default_sync_local() -> PathBuf {
