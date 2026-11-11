@@ -6,10 +6,13 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use anyhow::{Context, Result};
+use anyhow::Result;
 use serde::{Deserialize, Serialize};
 
-use crate::config::project_dirs;
+use crate::{
+    config::project_dirs,
+    storage::{self, Access},
+};
 
 #[derive(Debug, Default, Serialize, Deserialize)]
 struct FavoritesFile {
@@ -56,16 +59,10 @@ impl FavoritesStore {
     }
 
     pub fn save(&self) -> Result<()> {
-        if let Some(parent) = self.path.parent() {
-            fs::create_dir_all(parent)
-                .with_context(|| format!("failed to create favorites dir: {}", parent.display()))?;
-        }
         let file = FavoritesFile {
             favorites: self.favorites.clone(),
         };
-        let yaml = yaml_serde::to_string(&file).context("failed to serialize favorites")?;
-        fs::write(&self.path, yaml)
-            .with_context(|| format!("failed to write favorites: {}", self.path.display()))
+        storage::save_yaml(&self.path, &file, "favorites", Access::Inherit)
     }
 
     fn key(category: &str, host: &str) -> String {

@@ -6,11 +6,14 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use anyhow::{Context, Result};
+use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use time::{OffsetDateTime, macros::format_description};
 
-use crate::config::project_dirs;
+use crate::{
+    config::project_dirs,
+    storage::{self, Access},
+};
 
 const MAX_ENTRIES: usize = 50;
 const RECENT_DEFAULT: usize = 10;
@@ -85,16 +88,10 @@ impl HistoryStore {
     }
 
     pub fn save(&self) -> Result<()> {
-        if let Some(parent) = self.path.parent() {
-            fs::create_dir_all(parent)
-                .with_context(|| format!("failed to create history dir: {}", parent.display()))?;
-        }
         let file = HistoryFile {
             entries: self.entries.clone(),
         };
-        let yaml = yaml_serde::to_string(&file).context("failed to serialize history")?;
-        fs::write(&self.path, yaml)
-            .with_context(|| format!("failed to write history: {}", self.path.display()))
+        storage::save_yaml(&self.path, &file, "history", Access::Inherit)
     }
 }
 
