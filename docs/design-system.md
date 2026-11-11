@@ -10,7 +10,6 @@ All UI styling for `hoppr` flows through `src/theme.rs`. New colors, modifiers a
 | `surface`       | `#12131a` | Popovers, modal background.                               |
 | `surface_alt`   | `#1a1c25` | Selected row tint.                                        |
 | `border`        | `#252834` | Default panel border.                                     |
-| `border_strong` | `#3a3e4e` | Hover / form-field border.                                |
 | `text`          | `#f1f3f9` | Primary text.                                             |
 | `text_dim`      | `#8a92a6` | Secondary text — inactive labels.                         |
 | `text_muted`    | `#555c70` | Tertiary text — meta info, hints.                         |
@@ -26,9 +25,6 @@ All UI styling for `hoppr` flows through `src/theme.rs`. New colors, modifiers a
 | method                       | semantic                                       |
 | ---------------------------- | ---------------------------------------------- |
 | `Theme::base()`              | Default canvas style (`text` on `bg`).         |
-| `Theme::surface_style()`     | Modal / popover surface.                       |
-| `Theme::muted()`             | Secondary text on canvas.                      |
-| `Theme::dim()`               | Tertiary text on canvas.                       |
 | `Theme::border_style(active)`| Primary when `active`, neutral otherwise.      |
 | `Theme::highlight_primary()` | Selected-row tint, brand-accented.             |
 | `Theme::highlight_accent()`  | Selected-row tint, accent-colored.             |
