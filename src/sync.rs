@@ -461,13 +461,9 @@ fn credentials_cb(
             if let Ok(entries) = std::fs::read_dir(&ssh_dir) {
                 for entry in entries.flatten() {
                     let path = entry.path();
-                    let Some(name) = path.file_name().and_then(|n| n.to_str()) else {
-                        continue;
-                    };
-                    if !name.starts_with("id_") || name.ends_with(".pub") {
-                        continue;
-                    }
-                    if let Ok(cred) = Cred::ssh_key(user, None, &path, None) {
+                    if is_private_key_candidate(&path)
+                        && let Ok(cred) = Cred::ssh_key(user, None, &path, None)
+                    {
                         return Ok(cred);
                     }
                 }
@@ -494,6 +490,19 @@ fn credentials_cb(
     }
 
     Err(git2::Error::from_str("no suitable credentials available"))
+}
+
+/// True for `~/.ssh` entries named `id_*` that are not the public half of
+/// a key pair (`.pub`, in any letter case).
+fn is_private_key_candidate(path: &Path) -> bool {
+    let is_id_file = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .is_some_and(|name| name.starts_with("id_"));
+    let is_public_key = path
+        .extension()
+        .is_some_and(|ext| ext.eq_ignore_ascii_case("pub"));
+    is_id_file && !is_public_key
 }
 
 /// Branch convenience helper used by `hoppr sync status`.
@@ -547,6 +556,17 @@ mod tests {
             redact_url("ssh://git@github.com/x"),
             "ssh://git@github.com/x"
         );
+    }
+
+    #[test]
+    fn private_key_candidates_are_id_files_without_pub_extension() {
+        assert!(is_private_key_candidate(Path::new("/h/.ssh/id_ed25519")));
+        assert!(is_private_key_candidate(Path::new("/h/.ssh/id_work")));
+        assert!(is_private_key_candidate(Path::new("/h/.ssh/id_work.pem")));
+        assert!(!is_private_key_candidate(Path::new("/h/.ssh/id_work.pub")));
+        assert!(!is_private_key_candidate(Path::new("/h/.ssh/id_work.PUB")));
+        assert!(!is_private_key_candidate(Path::new("/h/.ssh/known_hosts")));
+        assert!(!is_private_key_candidate(Path::new("/h/.ssh/config")));
     }
 
     #[test]
