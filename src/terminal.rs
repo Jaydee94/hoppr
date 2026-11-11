@@ -10,7 +10,7 @@
 
 use std::{env, process::Command};
 
-use anyhow::{bail, Result};
+use anyhow::{Result, bail};
 
 #[derive(Debug, Clone)]
 enum Backend {
@@ -144,10 +144,10 @@ fn detect_backend() -> Option<Backend> {
         return Some(Backend::GnomeTerminal);
     }
 
-    if let Ok(desktop) = env::var("XDG_CURRENT_DESKTOP") {
-        if desktop.to_uppercase().contains("KDE") {
-            return Some(Backend::Konsole);
-        }
+    if let Ok(desktop) = env::var("XDG_CURRENT_DESKTOP")
+        && desktop.to_uppercase().contains("KDE")
+    {
+        return Some(Backend::Konsole);
     }
 
     if Command::new("xterm").arg("-version").output().is_ok() {

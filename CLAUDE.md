@@ -5,7 +5,7 @@ Guidance for Claude Code when working on this repository.
 ## Project
 
 `hoppr` is a Rust TUI launcher for SSH and other remote shells.
-Stack: **Rust 2021**, **ratatui 0.29**, **crossterm**, **clap 4**, **git2** (vendored libgit2 + libssh2 + OpenSSL — both HTTPS and SSH repo URLs work without a system `git`/`ssh`), **yaml_serde**.
+Stack: **Rust 2024** (MSRV 1.88), **ratatui 0.30**, **crossterm**, **clap 4**, **git2** (vendored libgit2 + libssh2 + OpenSSL — both HTTPS and SSH repo URLs work without a system `git`/`ssh`), **yaml_serde**.
 
 The binary is a single crate. There is no library target.
 

@@ -12,23 +12,23 @@
 //! └────────────────────────────────────────────────────┘
 
 use ratatui::{
+    Frame,
     layout::{Alignment, Constraint, Direction, Layout, Margin, Rect},
     style::{Modifier, Style},
     text::{Line, Span},
     widgets::{Block, BorderType, Borders, Clear, List, ListItem, Paragraph, Wrap},
-    Frame,
 };
 use unicode_width::UnicodeWidthStr;
 
 use crate::{
-    app::{relative_time, App, Focus, MessageKind, Mode, VirtualCategoryKind},
+    app::{App, Focus, MessageKind, Mode, VirtualCategoryKind, relative_time},
     connect,
     editor::{
-        sync_field_is_bool, CategoryForm, EditorState, EditorView, HostForm, PendingDelete,
-        MENU_ITEMS, SYNC_BTN_SAVE, SYNC_BTN_SYNC, SYNC_BTN_TEST,
+        CategoryForm, EditorState, EditorView, HostForm, MENU_ITEMS, PendingDelete, SYNC_BTN_SAVE,
+        SYNC_BTN_SYNC, SYNC_BTN_TEST, sync_field_is_bool,
     },
     sync::SyncStatus,
-    theme::{Theme, ACTIVE_GLYPH, INACTIVE_GLYPH},
+    theme::{ACTIVE_GLYPH, INACTIVE_GLYPH, Theme},
 };
 
 /// Number of columns reserved for a category icon, separator excluded.
@@ -963,10 +963,10 @@ fn draw_categories_editor(
 ) {
     let (filter_area, list_area) = split_filter_area(editor.category_filter.as_deref(), area);
 
-    if let Some(filter) = editor.category_filter.as_deref() {
-        if let Some(filter_area) = filter_area {
-            draw_filter_input(frame, filter, editor.filter_focus, theme, filter_area);
-        }
+    if let Some(filter) = editor.category_filter.as_deref()
+        && let Some(filter_area) = filter_area
+    {
+        draw_filter_input(frame, filter, editor.filter_focus, theme, filter_area);
     }
 
     let visible = editor.visible_categories(&app.config);
@@ -1011,10 +1011,10 @@ fn draw_hosts_editor(
 ) {
     let (filter_area, list_area) = split_filter_area(editor.host_filter.as_deref(), area);
 
-    if let Some(filter) = editor.host_filter.as_deref() {
-        if let Some(filter_area) = filter_area {
-            draw_filter_input(frame, filter, editor.filter_focus, theme, filter_area);
-        }
+    if let Some(filter) = editor.host_filter.as_deref()
+        && let Some(filter_area) = filter_area
+    {
+        draw_filter_input(frame, filter, editor.filter_focus, theme, filter_area);
     }
 
     let cat = app.config.categories.get(editor.categories_index);
@@ -1390,7 +1390,7 @@ fn toggle_spans(value: &str, theme: &Theme) -> Vec<Span<'static>> {
 mod tests {
     use std::path::PathBuf;
 
-    use ratatui::{backend::TestBackend, Terminal};
+    use ratatui::{Terminal, backend::TestBackend};
 
     use crate::{
         app::App,

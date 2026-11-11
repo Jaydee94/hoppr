@@ -373,12 +373,11 @@ impl EditorState {
                     .categories
                     .iter_mut()
                     .find(|c| c.name == category_name)
+                    && let Some(idx) = cat.hosts.iter().position(|h| h.name == host_name)
                 {
-                    if let Some(idx) = cat.hosts.iter().position(|h| h.name == host_name) {
-                        cat.hosts.remove(idx);
-                        self.dirty = true;
-                        return true;
-                    }
+                    cat.hosts.remove(idx);
+                    self.dirty = true;
+                    return true;
                 }
             }
         }
@@ -526,11 +525,7 @@ fn parse_bool(input: &str) -> Result<Option<bool>, String> {
 }
 
 fn bool_str(b: bool) -> String {
-    if b {
-        "true".into()
-    } else {
-        "false".into()
-    }
+    if b { "true".into() } else { "false".into() }
 }
 
 pub const MENU_ITEMS: &[(&str, EditorView)] = &[

@@ -7,7 +7,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use anyhow::{anyhow, Context, Result};
+use anyhow::{Context, Result, anyhow};
 use clap::CommandFactory;
 use clap_complete::generate;
 use crossterm::{
@@ -17,10 +17,10 @@ use crossterm::{
         PopKeyboardEnhancementFlags, PushKeyboardEnhancementFlags,
     },
     execute,
-    terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
+    terminal::{EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode},
 };
-use fuzzy_matcher::{skim::SkimMatcherV2, FuzzyMatcher};
-use ratatui::{backend::CrosstermBackend, Terminal};
+use fuzzy_matcher::{FuzzyMatcher, skim::SkimMatcherV2};
+use ratatui::{Terminal, backend::CrosstermBackend};
 
 mod app;
 mod cli;
@@ -38,14 +38,14 @@ use app::{App, Focus, Mode};
 use cli::{
     Cli, Command as CliCommand, ConfigCmd, ConnectArgs, HistoryArgs, ListArgs, ListFormat, SyncCmd,
 };
-use config::{default_config_path, Category, Config, Host, Inventory};
+use config::{Category, Config, Host, Inventory, default_config_path};
 use editor::{
-    sync_field_is_bool, sync_field_is_button, CategoryForm, EditorState, EditorView, HostForm,
-    PendingDelete, MENU_ITEMS, SYNC_AUTO_PULL, SYNC_AUTO_PUSH, SYNC_BTN_SAVE, SYNC_BTN_SYNC,
-    SYNC_BTN_TEST, SYNC_ELEMENT_COUNT, SYNC_REPO,
+    CategoryForm, EditorState, EditorView, HostForm, MENU_ITEMS, PendingDelete, SYNC_AUTO_PULL,
+    SYNC_AUTO_PUSH, SYNC_BTN_SAVE, SYNC_BTN_SYNC, SYNC_BTN_TEST, SYNC_ELEMENT_COUNT, SYNC_REPO,
+    sync_field_is_bool, sync_field_is_button,
 };
 use favorites::FavoritesStore;
-use history::{default_history_path, HistoryStore};
+use history::{HistoryStore, default_history_path};
 use sync::{SyncContext, SyncStatus};
 use terminal::TerminalLauncher;
 
@@ -95,28 +95,27 @@ fn load_with_sync(cli: &Cli, config_path: &Path) -> Result<(Config, SyncStatus)>
     };
 
     let want_sync = !cli.no_sync && (cli.sync || config.sync_enabled());
-    if want_sync {
-        if let Some(sync_cfg) = config.sync.as_ref() {
-            if let Some(ctx) = SyncContext::from(sync_cfg) {
-                match sync::ensure_repo(&ctx) {
-                    Ok(s) => {
-                        status = s;
-                        let tracked = ctx.tracked_path();
-                        if tracked.exists() {
-                            match Inventory::load_from_path(&tracked) {
-                                Ok(inv) => config.apply_inventory(inv),
-                                Err(err) => {
-                                    eprintln!("hoppr: shared inventory unreadable — {err:#}");
-                                    status = SyncStatus::Failed;
-                                }
-                            }
+    if want_sync
+        && let Some(sync_cfg) = config.sync.as_ref()
+        && let Some(ctx) = SyncContext::from(sync_cfg)
+    {
+        match sync::ensure_repo(&ctx) {
+            Ok(s) => {
+                status = s;
+                let tracked = ctx.tracked_path();
+                if tracked.exists() {
+                    match Inventory::load_from_path(&tracked) {
+                        Ok(inv) => config.apply_inventory(inv),
+                        Err(err) => {
+                            eprintln!("hoppr: shared inventory unreadable — {err:#}");
+                            status = SyncStatus::Failed;
                         }
                     }
-                    Err(err) => {
-                        eprintln!("hoppr: sync failed — {err:#}");
-                        status = SyncStatus::Failed;
-                    }
                 }
+            }
+            Err(err) => {
+                eprintln!("hoppr: sync failed — {err:#}");
+                status = SyncStatus::Failed;
             }
         }
     }
@@ -715,13 +714,13 @@ fn handle_editor_event(app: &mut App, code: KeyCode, ctrl: bool) -> Result<bool>
                         }
                     }
                     KeyCode::Char('d') => {
-                        if let Some(cat) = app.config.categories.get(editor.categories_index) {
-                            if let Some(host) = cat.hosts.get(editor.hosts_index) {
-                                editor.request_delete(PendingDelete::Host {
-                                    category_name: cat.name.clone(),
-                                    host_name: host.name.clone(),
-                                });
-                            }
+                        if let Some(cat) = app.config.categories.get(editor.categories_index)
+                            && let Some(host) = cat.hosts.get(editor.hosts_index)
+                        {
+                            editor.request_delete(PendingDelete::Host {
+                                category_name: cat.name.clone(),
+                                host_name: host.name.clone(),
+                            });
                         }
                     }
                     KeyCode::Char('s') if ctrl && editor.dirty => save_config(app)?,
@@ -881,10 +880,10 @@ fn handle_category_form(
             }
             if form.mode_create {
                 config.categories.push(cat);
-            } else if let Some(i) = form.category_index {
-                if let Some(slot) = config.categories.get_mut(i) {
-                    *slot = cat;
-                }
+            } else if let Some(i) = form.category_index
+                && let Some(slot) = config.categories.get_mut(i)
+            {
+                *slot = cat;
             }
             let created = form.mode_create;
             editor.dirty = true;
@@ -944,10 +943,9 @@ fn handle_host_form(
             } else if let (Some(cat), Some(idx)) = (
                 config.categories.get_mut(form.category_index),
                 form.host_index,
-            ) {
-                if let Some(slot) = cat.hosts.get_mut(idx) {
-                    *slot = host;
-                }
+            ) && let Some(slot) = cat.hosts.get_mut(idx)
+            {
+                *slot = host;
             }
             let created = form.mode_create;
             editor.dirty = true;
@@ -1027,10 +1025,10 @@ fn sync_pull_now(app: &mut App) {
         Ok(status) => {
             app.sync_status = status;
             let tracked = ctx.tracked_path();
-            if tracked.exists() {
-                if let Ok(inv) = Inventory::load_from_path(&tracked) {
-                    app.config.apply_inventory(inv);
-                }
+            if tracked.exists()
+                && let Ok(inv) = Inventory::load_from_path(&tracked)
+            {
+                app.config.apply_inventory(inv);
             }
             app.record_sync(sync::has_uncommitted_changes(&ctx).ok());
             if let Some(editor) = app.editor.as_mut() {
@@ -1067,10 +1065,10 @@ fn sync_clone_if_missing(app: &mut App) {
         Ok(status) => {
             app.sync_status = status;
             let tracked = ctx.tracked_path();
-            if tracked.exists() {
-                if let Ok(inv) = Inventory::load_from_path(&tracked) {
-                    app.config.apply_inventory(inv);
-                }
+            if tracked.exists()
+                && let Ok(inv) = Inventory::load_from_path(&tracked)
+            {
+                app.config.apply_inventory(inv);
             }
             app.record_sync(sync::has_uncommitted_changes(&ctx).ok());
             if let Some(editor) = app.editor.as_mut() {

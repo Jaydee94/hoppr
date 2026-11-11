@@ -8,7 +8,7 @@ use std::{
 
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
-use time::{macros::format_description, OffsetDateTime};
+use time::{OffsetDateTime, macros::format_description};
 
 use crate::config::project_dirs;
 

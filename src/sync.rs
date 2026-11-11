@@ -18,12 +18,12 @@ use std::{
     rc::Rc,
 };
 
-use anyhow::{anyhow, Context, Result};
+use anyhow::{Context, Result, anyhow};
 use git2::{
     AnnotatedCommit, Cred, FetchOptions, PushOptions, RemoteCallbacks, Repository, Signature,
 };
 
-use crate::config::{default_sync_local, SyncConfig};
+use crate::config::{SyncConfig, default_sync_local};
 
 #[derive(Debug, Clone)]
 pub struct SyncContext {
@@ -441,10 +441,10 @@ fn credentials_cb(
             let ssh_dir = home.home_dir().join(".ssh");
             for name in ["id_ed25519", "id_rsa", "id_ecdsa", "id_dsa"] {
                 let key = ssh_dir.join(name);
-                if key.exists() {
-                    if let Ok(cred) = Cred::ssh_key(user, None, &key, None) {
-                        return Ok(cred);
-                    }
+                if key.exists()
+                    && let Ok(cred) = Cred::ssh_key(user, None, &key, None)
+                {
+                    return Ok(cred);
                 }
             }
             if let Ok(entries) = std::fs::read_dir(&ssh_dir) {
@@ -471,10 +471,10 @@ fn credentials_cb(
         ) {
             return Cred::userpass_plaintext(&user, &pass);
         }
-        if let Ok(config) = git2::Config::open_default() {
-            if let Ok(helper) = Cred::credential_helper(&config, url, username) {
-                return Ok(helper);
-            }
+        if let Ok(config) = git2::Config::open_default()
+            && let Ok(helper) = Cred::credential_helper(&config, url, username)
+        {
+            return Ok(helper);
         }
     }
 

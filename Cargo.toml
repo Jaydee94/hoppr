@@ -1,7 +1,7 @@
 [package]
 name = "hoppr"
 version = "1.2.3"
-edition = "2021"
+edition = "2024"
 description = "A fast, minimal TUI launcher for SSH and other remote shells."
 license = "MIT"
 repository = "https://github.com/Jaydee94/hoppr"
