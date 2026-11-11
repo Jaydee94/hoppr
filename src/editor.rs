@@ -259,7 +259,8 @@ pub struct EditorState {
     pub defaults_field: usize,
     pub defaults_inputs: [String; 4], // command program, port, user, terminal_command
     pub sync_field: usize,
-    pub sync_inputs: [String; 6], // repo, branch, path, local, auto_pull, auto_push
+    /// Indexed by the `SYNC_*` field constants.
+    pub sync_inputs: [String; SYNC_INPUT_COUNT],
     pub dirty: bool,
     pub flash: Option<String>,
     /// Set when the user pressed Esc on the menu while `dirty` was true.
@@ -279,14 +280,12 @@ pub struct EditorState {
 /// underneath the form — they don't read from `sync_inputs`, they fire
 /// their action on Enter.
 pub const SYNC_REPO: usize = 0;
-#[allow(dead_code)]
 pub const SYNC_BRANCH: usize = 1;
-#[allow(dead_code)]
 pub const SYNC_PATH: usize = 2;
-#[allow(dead_code)]
 pub const SYNC_LOCAL: usize = 3;
 pub const SYNC_AUTO_PULL: usize = 4;
 pub const SYNC_AUTO_PUSH: usize = 5;
+pub const SYNC_INPUT_COUNT: usize = 6;
 pub const SYNC_BTN_TEST: usize = 6;
 pub const SYNC_BTN_SYNC: usize = 7;
 pub const SYNC_BTN_SAVE: usize = 8;
@@ -310,14 +309,13 @@ impl EditorState {
             config.defaults.terminal_command.clone().unwrap_or_default(),
         ];
         let sync = config.sync.clone().unwrap_or_default();
-        let sync_inputs = [
-            sync.repo.unwrap_or_default(),
-            sync.branch.unwrap_or_default(),
-            sync.path.unwrap_or_default(),
-            sync.local.unwrap_or_default(),
-            sync.auto_pull.map(bool_str).unwrap_or_default(),
-            sync.auto_push.map(bool_str).unwrap_or_default(),
-        ];
+        let mut sync_inputs: [String; SYNC_INPUT_COUNT] = Default::default();
+        sync_inputs[SYNC_REPO] = sync.repo.unwrap_or_default();
+        sync_inputs[SYNC_BRANCH] = sync.branch.unwrap_or_default();
+        sync_inputs[SYNC_PATH] = sync.path.unwrap_or_default();
+        sync_inputs[SYNC_LOCAL] = sync.local.unwrap_or_default();
+        sync_inputs[SYNC_AUTO_PULL] = sync.auto_pull.map(bool_str).unwrap_or_default();
+        sync_inputs[SYNC_AUTO_PUSH] = sync.auto_push.map(bool_str).unwrap_or_default();
         Self {
             view: EditorView::Menu,
             menu_index: 0,
@@ -472,7 +470,7 @@ impl EditorState {
     }
 
     pub fn apply_sync(&mut self, config: &mut Config) -> Result<(), String> {
-        let repo = empty_to_none(&self.sync_inputs[0]);
+        let repo = empty_to_none(&self.sync_inputs[SYNC_REPO]);
         if repo.is_none() {
             config.sync = None;
             self.dirty = true;
@@ -480,11 +478,11 @@ impl EditorState {
         }
         let mut sync = config.sync.clone().unwrap_or_default();
         sync.repo = repo;
-        sync.branch = empty_to_none(&self.sync_inputs[1]);
-        sync.path = empty_to_none(&self.sync_inputs[2]);
-        sync.local = empty_to_none(&self.sync_inputs[3]);
-        sync.auto_pull = parse_bool(&self.sync_inputs[4])?;
-        sync.auto_push = parse_bool(&self.sync_inputs[5])?;
+        sync.branch = empty_to_none(&self.sync_inputs[SYNC_BRANCH]);
+        sync.path = empty_to_none(&self.sync_inputs[SYNC_PATH]);
+        sync.local = empty_to_none(&self.sync_inputs[SYNC_LOCAL]);
+        sync.auto_pull = parse_bool(&self.sync_inputs[SYNC_AUTO_PULL])?;
+        sync.auto_push = parse_bool(&self.sync_inputs[SYNC_AUTO_PUSH])?;
         config.sync = Some(sync);
         self.dirty = true;
         Ok(())
