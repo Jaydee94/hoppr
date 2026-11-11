@@ -214,73 +214,82 @@ fn event_loop(terminal: &mut Terminal<CrosstermBackend<Stdout>>, app: &mut App) 
             continue;
         }
 
-        match app.mode {
-            Mode::Browse => match key.code {
-                KeyCode::Char('c') if ctrl => return Ok(()),
-                KeyCode::Esc | KeyCode::Char('q') if app.focus != Focus::Search => return Ok(()),
-                KeyCode::Esc if app.focus == Focus::Search => app.clear_search_focus_hosts(),
-                KeyCode::Tab => app.toggle_focus(),
-                KeyCode::Char('/') => {
-                    // `/` always starts a fresh search: when re-entering from
-                    // another focus with a leftover query, wipe it first so
-                    // keystrokes don't append to stale text.
-                    if app.focus != Focus::Search && !app.search_query.is_empty() {
-                        app.clear_search_query();
-                    }
-                    app.focus_search();
-                }
-                KeyCode::Char('u') if ctrl && app.focus == Focus::Search => {
-                    app.clear_search_query();
-                }
-                KeyCode::Char('e') if app.focus != Focus::Search => app.enter_edit_mode(),
-                KeyCode::Up | KeyCode::Char('k') if app.focus != Focus::Search => app.previous(),
-                KeyCode::Down | KeyCode::Char('j') if app.focus != Focus::Search => app.next(),
-                KeyCode::Backspace if app.focus == Focus::Search => app.pop_search_char(),
-                KeyCode::Enter if app.focus == Focus::Search => app.clear_search_focus_hosts(),
-                // Global search toggle (Ctrl+A) — only meaningful in search mode
-                KeyCode::Char('a') if ctrl => {
-                    app.search_all = !app.search_all;
-                    app.hosts_state.select(Some(0));
-                    let label = if app.search_all {
-                        "Global search: all categories"
-                    } else {
-                        "Search: current category"
-                    };
-                    app.set_status(label);
-                }
-                KeyCode::Char(c) if app.focus == Focus::Search => app.append_search_char(c),
-                // Favorite toggle
-                KeyCode::Char('f') if app.focus == Focus::Hosts => {
-                    let host_cat = app
-                        .selected_host_with_category()
-                        .map(|(h, c)| (h.name.clone(), c.to_owned()));
-                    if let Some((host_name, cat_name)) = host_cat {
-                        let starred = app.favorites.toggle(&cat_name, &host_name);
-                        let _ = app.favorites.save();
-                        if starred {
-                            app.set_status_success(format!("★  {host_name} starred"));
-                        } else {
-                            app.set_status(format!("{host_name} removed from favorites"));
-                        }
-                        app.ensure_valid_selection();
-                    }
-                }
-                // Open in new terminal tab
-                KeyCode::Char('t') if app.focus == Focus::Hosts && app.terminal.is_available() => {
-                    ssh_spawn(app)?;
-                }
-                KeyCode::Enter if app.focus == Focus::Hosts => {
-                    ssh_handoff(terminal, app)?;
-                }
-                _ => {}
-            },
-            Mode::Edit => {
-                if input::handle_editor_key(app, key.code, ctrl)? == Flow::Quit {
-                    return Ok(());
-                }
-            }
+        let flow = match app.mode {
+            Mode::Browse => handle_browse_key(terminal, app, key.code, ctrl)?,
+            Mode::Edit => input::handle_editor_key(app, key.code, ctrl)?,
+        };
+        if flow == Flow::Quit {
+            return Ok(());
         }
     }
+}
+
+fn handle_browse_key(
+    terminal: &mut Terminal<CrosstermBackend<Stdout>>,
+    app: &mut App,
+    code: KeyCode,
+    ctrl: bool,
+) -> Result<Flow> {
+    match code {
+        KeyCode::Char('c') if ctrl => return Ok(Flow::Quit),
+        KeyCode::Esc | KeyCode::Char('q') if app.focus != Focus::Search => return Ok(Flow::Quit),
+        KeyCode::Esc if app.focus == Focus::Search => app.clear_search_focus_hosts(),
+        KeyCode::Tab => app.toggle_focus(),
+        KeyCode::Char('/') => {
+            // `/` always starts a fresh search: when re-entering from
+            // another focus with a leftover query, wipe it first so
+            // keystrokes don't append to stale text.
+            if app.focus != Focus::Search && !app.search_query.is_empty() {
+                app.clear_search_query();
+            }
+            app.focus_search();
+        }
+        KeyCode::Char('u') if ctrl && app.focus == Focus::Search => {
+            app.clear_search_query();
+        }
+        KeyCode::Char('e') if app.focus != Focus::Search => app.enter_edit_mode(),
+        KeyCode::Up | KeyCode::Char('k') if app.focus != Focus::Search => app.previous(),
+        KeyCode::Down | KeyCode::Char('j') if app.focus != Focus::Search => app.next(),
+        KeyCode::Backspace if app.focus == Focus::Search => app.pop_search_char(),
+        KeyCode::Enter if app.focus == Focus::Search => app.clear_search_focus_hosts(),
+        KeyCode::Char('a') if ctrl => toggle_search_scope(app),
+        KeyCode::Char(c) if app.focus == Focus::Search => app.append_search_char(c),
+        KeyCode::Char('f') if app.focus == Focus::Hosts => toggle_favorite(app),
+        KeyCode::Char('t') if app.focus == Focus::Hosts && app.terminal.is_available() => {
+            ssh_spawn(app)?;
+        }
+        KeyCode::Enter if app.focus == Focus::Hosts => ssh_handoff(terminal, app)?,
+        _ => {}
+    }
+    Ok(Flow::Continue)
+}
+
+fn toggle_search_scope(app: &mut App) {
+    app.search_all = !app.search_all;
+    app.hosts_state.select(Some(0));
+    let label = if app.search_all {
+        "Global search: all categories"
+    } else {
+        "Search: current category"
+    };
+    app.set_status(label);
+}
+
+fn toggle_favorite(app: &mut App) {
+    let host_cat = app
+        .selected_host_with_category()
+        .map(|(h, c)| (h.name.clone(), c.to_owned()));
+    let Some((host_name, cat_name)) = host_cat else {
+        return;
+    };
+    let starred = app.favorites.toggle(&cat_name, &host_name);
+    let _ = app.favorites.save();
+    if starred {
+        app.set_status_success(format!("★  {host_name} starred"));
+    } else {
+        app.set_status(format!("{host_name} removed from favorites"));
+    }
+    app.ensure_valid_selection();
 }
 
 /// `?` and F1 must NOT toggle the help overlay when the focused widget
