@@ -13,7 +13,8 @@ The binary is a single crate. There is no library target.
 
 ```
 src/
-  main.rs        entry point + CLI dispatch + TUI event loop
+  main.rs        entry point + CLI dispatch + TUI event loop (browse-mode keys)
+  input.rs       key handling for the settings editor (per-view handlers, save + sync actions)
   cli.rs         clap argument and subcommand definitions
   config.rs      YAML schema (Config, Defaults, SyncConfig, Category, Host, Inventory)
   storage.rs     shared YAML file persistence (tolerant load, atomic write-then-rename save)

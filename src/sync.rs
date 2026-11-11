@@ -279,6 +279,17 @@ pub fn local_repo_ready(ctx: &SyncContext) -> bool {
     ctx.local_clone.exists() && Repository::open(&ctx.local_clone).is_ok()
 }
 
+/// Cheap (local-only) probe of the synced clone. Returns `None` when sync
+/// isn't configured or the clone isn't a usable git repo; otherwise the
+/// bool reflects `git status` — true means there are uncommitted changes.
+pub fn probe_dirty(sync: Option<&SyncConfig>) -> Option<bool> {
+    let ctx = SyncContext::from(sync?)?;
+    if !local_repo_ready(&ctx) {
+        return None;
+    }
+    has_uncommitted_changes(&ctx).ok()
+}
+
 /// Fast-forward pull. Returns whether the working copy moved.
 pub fn pull(ctx: &SyncContext) -> Result<SyncStatus> {
     let repo = Repository::open(&ctx.local_clone)
