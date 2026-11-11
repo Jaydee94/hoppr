@@ -28,6 +28,18 @@ All UI styling for `hoppr` flows through `src/theme.rs`. New colors, modifiers a
 | `Theme::border_style(active)`| Primary when `active`, neutral otherwise.      |
 | `Theme::highlight_primary()` | Selected-row tint, brand-accented.             |
 | `Theme::highlight_accent()`  | Selected-row tint, accent-colored.             |
+| `Theme::bold(color)`         | Bold text in any palette color.                |
+| `Theme::title()`             | Active titles, key hints (`primary_glow`, bold).|
+| `Theme::key()`               | Key column of the help overlay (`accent`, bold).|
+| `Theme::cursor()`            | Blinking search caret.                         |
+| `Theme::selectable(selected)`| List row / button label: bold `text` when selected, `text_dim` otherwise. |
+| `Theme::panel()`             | Modal / popover fill (`surface` background).   |
+| `Theme::panel_border(color)` | Border drawn on a `surface` fill.              |
+| `Theme::button_fill(active)` | Button background: `surface_alt` when focused. |
+| `Theme::input_border(active, invalid)` | Form-field border color: `error` when invalid, `primary` when focused, `border` otherwise. |
+| `theme::selection_glyph(selected)` | Leading row marker (`ACTIVE_GLYPH` / `INACTIVE_GLYPH`). |
+
+A plain foreground color needs no helper: ratatui converts a palette `Color` into a `Style`, so pass the token directly (`Span::styled("…", theme.text_muted)`). `ui.rs` never builds a `Style` by hand.
 
 ## Layout primitives
 

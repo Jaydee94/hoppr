@@ -51,6 +51,59 @@ impl Theme {
         Style::default().fg(color).bg(self.bg)
     }
 
+    /// Bold text in `color`, leaving the background to the widget.
+    pub fn bold(color: Color) -> Style {
+        Style::new().fg(color).add_modifier(Modifier::BOLD)
+    }
+
+    pub fn title(&self) -> Style {
+        Self::bold(self.primary_glow)
+    }
+
+    pub fn key(&self) -> Style {
+        Self::bold(self.accent)
+    }
+
+    pub fn cursor(&self) -> Style {
+        Style::new()
+            .fg(self.accent)
+            .add_modifier(Modifier::SLOW_BLINK)
+    }
+
+    pub fn selectable(&self, selected: bool) -> Style {
+        if selected {
+            Self::bold(self.text)
+        } else {
+            Style::new().fg(self.text_dim)
+        }
+    }
+
+    pub fn panel(&self) -> Style {
+        Style::new().bg(self.surface)
+    }
+
+    pub fn button_fill(&self, active: bool) -> Style {
+        Style::new().bg(if active {
+            self.surface_alt
+        } else {
+            self.surface
+        })
+    }
+
+    pub fn panel_border(&self, color: Color) -> Style {
+        Style::new().fg(color).bg(self.surface)
+    }
+
+    pub fn input_border(&self, active: bool, invalid: bool) -> Color {
+        if invalid {
+            self.error
+        } else if active {
+            self.primary
+        } else {
+            self.border
+        }
+    }
+
     pub fn highlight_primary(&self) -> Style {
         Style::default()
             .fg(self.primary_glow)
@@ -68,3 +121,13 @@ impl Theme {
 
 pub const ACTIVE_GLYPH: &str = "▍ ";
 pub const INACTIVE_GLYPH: &str = "  ";
+
+/// Leading marker of a list row: a bar for the selected row, padding of
+/// the same width otherwise.
+pub const fn selection_glyph(selected: bool) -> &'static str {
+    if selected {
+        ACTIVE_GLYPH
+    } else {
+        INACTIVE_GLYPH
+    }
+}
