@@ -26,7 +26,7 @@ impl FavoritesStore {
     pub fn load(path: &Path) -> Self {
         let favorites = fs::read_to_string(path)
             .ok()
-            .and_then(|s| serde_yaml::from_str::<FavoritesFile>(&s).ok())
+            .and_then(|s| yaml_serde::from_str::<FavoritesFile>(&s).ok())
             .map(|f| f.favorites)
             .unwrap_or_default();
         Self {
@@ -63,7 +63,7 @@ impl FavoritesStore {
         let file = FavoritesFile {
             favorites: self.favorites.clone(),
         };
-        let yaml = serde_yaml::to_string(&file).context("failed to serialize favorites")?;
+        let yaml = yaml_serde::to_string(&file).context("failed to serialize favorites")?;
         fs::write(&self.path, yaml)
             .with_context(|| format!("failed to write favorites: {}", self.path.display()))
     }

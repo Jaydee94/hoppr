@@ -145,7 +145,7 @@ impl Config {
             return Ok(Self::default());
         }
 
-        serde_yaml::from_str::<Self>(&content)
+        yaml_serde::from_str::<Self>(&content)
             .with_context(|| format!("invalid YAML in config file: {}", path.display()))
     }
 
@@ -154,7 +154,7 @@ impl Config {
             fs::create_dir_all(parent)
                 .with_context(|| format!("failed to create config dir: {}", parent.display()))?;
         }
-        let yaml = serde_yaml::to_string(self).context("failed to serialize config")?;
+        let yaml = yaml_serde::to_string(self).context("failed to serialize config")?;
 
         // Atomic write: stage in a sibling tempfile, then rename. This avoids
         // truncating the user's config if hoppr crashes mid-write.
@@ -214,7 +214,7 @@ impl Inventory {
             return Ok(Self::default());
         }
 
-        serde_yaml::from_str::<Self>(&content)
+        yaml_serde::from_str::<Self>(&content)
             .with_context(|| format!("invalid YAML in inventory file: {}", path.display()))
     }
 
@@ -224,7 +224,7 @@ impl Inventory {
             fs::create_dir_all(parent)
                 .with_context(|| format!("failed to create inventory dir: {}", parent.display()))?;
         }
-        let yaml = serde_yaml::to_string(self).context("failed to serialize inventory")?;
+        let yaml = yaml_serde::to_string(self).context("failed to serialize inventory")?;
 
         let parent = path.parent().unwrap_or_else(|| Path::new("."));
         let file_name = path

@@ -1127,7 +1127,7 @@ fn run_config_cmd(cmd: ConfigCmd, config_path: &Path) -> Result<()> {
         }
         ConfigCmd::Show => {
             let cfg = Config::load_or_default(config_path)?;
-            println!("{}", serde_yaml::to_string(&cfg)?);
+            println!("{}", yaml_serde::to_string(&cfg)?);
         }
         ConfigCmd::Edit => {
             if !config_path.exists() {
@@ -1239,7 +1239,7 @@ fn run_list(args: ListArgs, config: &Config) -> Result<()> {
                 sync: config.sync.clone(),
                 categories: categories.into_iter().cloned().collect(),
             };
-            println!("{}", serde_yaml::to_string(&filtered)?);
+            println!("{}", yaml_serde::to_string(&filtered)?);
         }
         ListFormat::Json => {
             let filtered: Vec<_> = categories.into_iter().cloned().collect();
@@ -1327,15 +1327,15 @@ fn run_history(args: HistoryArgs, history: &HistoryStore) -> Result<()> {
             let data: Vec<_> = entries
                 .iter()
                 .map(|e| {
-                    let mut m = serde_yaml::Mapping::new();
+                    let mut m = yaml_serde::Mapping::new();
                     m.insert("host".into(), e.host_name.clone().into());
                     m.insert("ip".into(), e.ip.clone().into());
                     m.insert("category".into(), e.category.clone().into());
                     m.insert("connected_at".into(), e.connected_at_display().into());
-                    serde_yaml::Value::Mapping(m)
+                    yaml_serde::Value::Mapping(m)
                 })
                 .collect();
-            println!("{}", serde_yaml::to_string(&data)?);
+            println!("{}", yaml_serde::to_string(&data)?);
         }
     }
     Ok(())

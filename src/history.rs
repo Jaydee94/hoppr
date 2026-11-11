@@ -49,7 +49,7 @@ impl HistoryStore {
     pub fn load(path: &Path) -> Self {
         let entries = fs::read_to_string(path)
             .ok()
-            .and_then(|s| serde_yaml::from_str::<HistoryFile>(&s).ok())
+            .and_then(|s| yaml_serde::from_str::<HistoryFile>(&s).ok())
             .map(|f| f.entries)
             .unwrap_or_default();
         Self {
@@ -92,7 +92,7 @@ impl HistoryStore {
         let file = HistoryFile {
             entries: self.entries.clone(),
         };
-        let yaml = serde_yaml::to_string(&file).context("failed to serialize history")?;
+        let yaml = yaml_serde::to_string(&file).context("failed to serialize history")?;
         fs::write(&self.path, yaml)
             .with_context(|| format!("failed to write history: {}", self.path.display()))
     }

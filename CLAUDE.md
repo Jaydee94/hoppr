@@ -5,7 +5,7 @@ Guidance for Claude Code when working on this repository.
 ## Project
 
 `hoppr` is a Rust TUI launcher for SSH and other remote shells.
-Stack: **Rust 2021**, **ratatui 0.29**, **crossterm**, **clap 4**, **git2** (vendored libgit2 + libssh2 + OpenSSL — both HTTPS and SSH repo URLs work without a system `git`/`ssh`), **serde_yaml**.
+Stack: **Rust 2021**, **ratatui 0.29**, **crossterm**, **clap 4**, **git2** (vendored libgit2 + libssh2 + OpenSSL — both HTTPS and SSH repo URLs work without a system `git`/`ssh`), **yaml_serde**.
 
 The binary is a single crate. There is no library target.
 
@@ -113,7 +113,7 @@ Never push to a release branch directly — open a PR, get it merged into `main`
 
 - `Config::save` is not atomic — fine for a hand-edited launcher, but don't rely on it inside `sync.rs` mid-pull.
 - `git2` credential callbacks try, in order: SSH agent, `~/.ssh/id_*`, `$HOPPR_GIT_USER`/`$HOPPR_GIT_TOKEN`, then the OS git credential helper. Tests that touch sync must not depend on real credentials.
-- `serde_yaml` does not preserve comments. The central-repo workflow assumes the source-of-truth is the YAML graph, not its formatting.
+- `yaml_serde` does not preserve comments. The central-repo workflow assumes the source-of-truth is the YAML graph, not its formatting.
 
 ## Files Claude should treat as guardrails
 
