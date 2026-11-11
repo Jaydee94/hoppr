@@ -37,7 +37,6 @@ pub enum Mode {
 pub enum MessageKind {
     Success,
     Info,
-    Warn,
     Error,
 }
 
@@ -46,7 +45,6 @@ impl MessageKind {
         match self {
             Self::Success => "✓",
             Self::Info => "·",
-            Self::Warn => "⚠",
             Self::Error => "✕",
         }
     }
@@ -54,7 +52,6 @@ impl MessageKind {
     pub fn ttl(self) -> Duration {
         match self {
             Self::Success | Self::Info => Duration::from_secs(3),
-            Self::Warn => Duration::from_secs(6),
             Self::Error => Duration::from_secs(10),
         }
     }
@@ -539,11 +536,6 @@ impl App {
 
     pub fn set_status_success<S: Into<String>>(&mut self, msg: S) {
         self.set_status_kind(MessageKind::Success, msg);
-    }
-
-    #[allow(dead_code)]
-    pub fn set_status_warn<S: Into<String>>(&mut self, msg: S) {
-        self.set_status_kind(MessageKind::Warn, msg);
     }
 
     pub fn set_status_error<S: Into<String>>(&mut self, msg: S) {

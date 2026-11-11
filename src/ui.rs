@@ -471,7 +471,6 @@ fn middle_line(app: &App, theme: &Theme) -> Line<'static> {
         let color = match msg.kind {
             MessageKind::Success => theme.success,
             MessageKind::Info => theme.text_dim,
-            MessageKind::Warn => theme.warning,
             MessageKind::Error => theme.error,
         };
         spans.push(Span::styled(
