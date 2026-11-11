@@ -516,7 +516,6 @@ pub fn current_branch(ctx: &SyncContext) -> Result<String> {
     }
 }
 
-/// Returns true when the local clone has uncommitted changes.
 pub fn has_uncommitted_changes(ctx: &SyncContext) -> Result<bool> {
     let repo = Repository::open(&ctx.local_clone)?;
     let statuses = repo.statuses(None)?;

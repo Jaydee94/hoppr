@@ -27,7 +27,7 @@ use crate::{
     connect,
     editor::{
         CategoryForm, EditorState, EditorView, HostForm, MENU_ITEMS, PendingDelete, SYNC_BTN_SAVE,
-        SYNC_BTN_SYNC, SYNC_BTN_TEST, sync_field_is_bool,
+        SYNC_BTN_SYNC, SYNC_BTN_TEST, SYNC_INPUT_COUNT, sync_field_is_bool,
     },
     sync::SyncStatus,
     theme::{Theme, selection_glyph},
@@ -1019,7 +1019,7 @@ fn draw_defaults_editor(frame: &mut Frame<'_>, editor: &EditorState, theme: &The
 }
 
 fn draw_sync_editor(frame: &mut Frame<'_>, editor: &EditorState, theme: &Theme, area: Rect) {
-    let labels = [
+    const LABELS: [&str; SYNC_INPUT_COUNT] = [
         "Repo URL",
         "Branch",
         "Path in repo",
@@ -1027,20 +1027,17 @@ fn draw_sync_editor(frame: &mut Frame<'_>, editor: &EditorState, theme: &Theme, 
         "Auto-pull",
         "Auto-push",
     ];
+    const BUTTON_ROW_HEIGHT: u16 = 4;
+
+    let constraints = LABELS
+        .iter()
+        .map(|_| Constraint::Length(3))
+        .chain([Constraint::Length(BUTTON_ROW_HEIGHT), Constraint::Min(0)]);
     let chunks = Layout::default()
         .direction(Direction::Vertical)
-        .constraints([
-            Constraint::Length(3), // Repo URL
-            Constraint::Length(3), // Branch
-            Constraint::Length(3), // Path in repo
-            Constraint::Length(3), // Local clone
-            Constraint::Length(3), // Auto-pull toggle
-            Constraint::Length(3), // Auto-push toggle
-            Constraint::Length(4), // Action buttons row (label + caption)
-            Constraint::Min(0),
-        ])
+        .constraints(constraints)
         .split(area);
-    for (i, label) in labels.iter().enumerate() {
+    for (i, label) in LABELS.iter().enumerate() {
         let active = editor.sync_field == i;
         let is_bool = sync_field_is_bool(i);
         let mut spans = vec![Span::styled(format!(" {label:<14} "), theme.text_dim)];
@@ -1066,7 +1063,7 @@ fn draw_sync_editor(frame: &mut Frame<'_>, editor: &EditorState, theme: &Theme, 
         frame.render_widget(para, chunks[i]);
     }
 
-    draw_sync_buttons(frame, editor, theme, chunks[6]);
+    draw_sync_buttons(frame, editor, theme, chunks[LABELS.len()]);
 }
 
 /// Render the row of action buttons under the sync form. Each button is
