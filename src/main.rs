@@ -51,7 +51,7 @@ use terminal::TerminalLauncher;
 fn main() -> Result<()> {
     let mut cli = Cli::parse_cli();
     let command = cli.command.take();
-    let config_path = resolve_config_path(&cli)?;
+    let config_path = cli.config.clone().unwrap_or_else(default_config_path);
 
     match command {
         Some(CliCommand::Completions { shell }) => {
@@ -60,7 +60,7 @@ fn main() -> Result<()> {
             Ok(())
         }
         Some(CliCommand::Config(sub)) => run_config_cmd(sub, &config_path),
-        Some(CliCommand::Sync(sub)) => run_sync_cmd(sub, &cli, &config_path),
+        Some(CliCommand::Sync(sub)) => run_sync_cmd(sub, &config_path),
         Some(CliCommand::List(args)) => {
             let (cfg, _) = load_with_sync(&cli, &config_path)?;
             run_list(args, &cfg)
@@ -78,11 +78,6 @@ fn main() -> Result<()> {
             run_tui(cfg, config_path, status)
         }
     }
-}
-
-fn resolve_config_path(cli: &Cli) -> Result<PathBuf> {
-    let path = cli.config.clone().unwrap_or_else(default_config_path);
-    Ok(path)
 }
 
 fn load_with_sync(cli: &Cli, config_path: &Path) -> Result<(Config, SyncStatus)> {
@@ -256,7 +251,7 @@ fn handle_browse_key(
         KeyCode::Char(c) if app.focus == Focus::Search => app.append_search_char(c),
         KeyCode::Char('f') if app.focus == Focus::Hosts => toggle_favorite(app),
         KeyCode::Char('t') if app.focus == Focus::Hosts && app.terminal.is_available() => {
-            ssh_spawn(app)?;
+            ssh_spawn(app);
         }
         KeyCode::Enter if app.focus == Focus::Hosts => ssh_handoff(terminal, app)?,
         _ => {}
@@ -398,12 +393,12 @@ fn connection_target_label(config: &Config, host: &Host) -> String {
 }
 
 /// Open the connection in a new terminal window without interrupting the TUI.
-fn ssh_spawn(app: &mut App) -> Result<()> {
+fn ssh_spawn(app: &mut App) {
     let host_cat = app
         .selected_host_with_category()
         .map(|(h, c)| (h.clone(), c.to_owned()));
     let Some((host, category_name)) = host_cat else {
-        return Ok(());
+        return;
     };
 
     let command = connect::build_command(&app.config, &host);
@@ -425,7 +420,6 @@ fn ssh_spawn(app: &mut App) -> Result<()> {
             app.set_status_error(format!("Terminal launch failed: {err:#}"));
         }
     }
-    Ok(())
 }
 
 // ─── headless subcommands ───────────────────────────────────────────────────
@@ -491,7 +485,7 @@ fn starter_config() -> Config {
     }
 }
 
-fn run_sync_cmd(cmd: SyncCmd, _cli: &Cli, config_path: &Path) -> Result<()> {
+fn run_sync_cmd(cmd: SyncCmd, config_path: &Path) -> Result<()> {
     let cfg = Config::load_or_default(config_path)?;
     let sync_cfg = cfg.sync.as_ref().ok_or_else(|| {
         anyhow!(
