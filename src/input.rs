@@ -629,7 +629,7 @@ fn sync_test_connection(editor: &mut EditorState) {
         editor.flash("Set a repo URL first");
         return;
     }
-    editor.flash(format!("Reaching {url} …"));
+    editor.flash(format!("Reaching {} …", sync::redact_url(&url)));
     match sync::test_connection(&url) {
         Ok(()) => editor.flash("Connection OK"),
         Err(err) => editor.flash(format!("Connection failed: {err:#}")),

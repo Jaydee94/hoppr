@@ -74,7 +74,7 @@ fn contains_parent_traversal(path: &str) -> bool {
 /// Strip `user:password@` (and `user@`) prefixes from an http(s) URL so secrets
 /// aren't echoed in error messages. SSH URLs (`git@host:...`) are left intact
 /// — the `git` username is conventional and there's no embedded secret.
-fn redact_url(url: &str) -> String {
+pub fn redact_url(url: &str) -> String {
     if let Some(rest) = url
         .strip_prefix("https://")
         .or_else(|| url.strip_prefix("http://"))

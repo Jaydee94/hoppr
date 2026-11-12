@@ -509,7 +509,7 @@ fn run_sync_cmd(cmd: SyncCmd, config_path: &Path) -> Result<()> {
                 .save_to_path(ctx.tracked_path())
                 .context("write inventory into tracked path")?;
             sync::commit_and_push(&ctx, &message)?;
-            println!("pushed to {}@{}", ctx.repo_url, ctx.branch);
+            println!("{}", push_summary(&ctx));
         }
         SyncCmd::Status => {
             let branch = sync::current_branch(&ctx).unwrap_or_else(|_| "?".into());
@@ -521,6 +521,10 @@ fn run_sync_cmd(cmd: SyncCmd, config_path: &Path) -> Result<()> {
         }
     }
     Ok(())
+}
+
+fn push_summary(ctx: &SyncContext) -> String {
+    format!("pushed to {}@{}", ctx.safe_url(), ctx.branch)
 }
 
 fn run_list(args: &ListArgs, config: &Config) -> Result<()> {
@@ -728,4 +732,23 @@ fn find_host(config: &Config, query: &str) -> Option<Host> {
         .collect();
     scored.sort_by_key(|(score, _)| Reverse(*score));
     scored.first().map(|(_, h)| (*h).clone())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn push_summary_does_not_leak_url_credentials() {
+        let sync_cfg = config::SyncConfig {
+            repo: Some("https://alice:s3cret@git.example.com/team/hosts.git".into()),
+            branch: Some("trunk".into()),
+            ..Default::default()
+        };
+        let ctx = SyncContext::from(&sync_cfg).expect("repo is set");
+        assert_eq!(
+            push_summary(&ctx),
+            "pushed to https://git.example.com/team/hosts.git@trunk"
+        );
+    }
 }
