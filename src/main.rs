@@ -214,7 +214,13 @@ fn event_loop(terminal: &mut Terminal<CrosstermBackend<Stdout>>, app: &mut App) 
 
         let flow = match app.mode {
             Mode::Browse => handle_browse_key(terminal, app, key.code, ctrl)?,
-            Mode::Edit => input::handle_editor_key(app, key.code, key.modifiers)?,
+            Mode::Edit => {
+                let mut redraw = |app: &mut App| -> Result<()> {
+                    terminal.draw(|frame| ui::draw(frame, app))?;
+                    Ok(())
+                };
+                input::handle_editor_key(app, key.code, key.modifiers, &mut redraw)?
+            }
         };
         if flow == Flow::Quit {
             return Ok(());

@@ -35,9 +35,16 @@ enum Action {
     Exit,
     SaveAndExit,
     DiscardAndExit,
+    TestConnection,
     PullNow,
     CloneIfMissing,
 }
+
+/// Draws one frame immediately. The sync actions block the event loop for
+/// the length of a git round-trip, so a progress message set just before
+/// one would be overwritten by the result without ever reaching the screen
+/// unless a frame is forced in between.
+pub type Redraw<'a> = dyn FnMut(&mut App) -> Result<()> + 'a;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Step {
@@ -45,7 +52,12 @@ enum Step {
     Forward,
 }
 
-pub fn handle_editor_key(app: &mut App, code: KeyCode, modifiers: KeyModifiers) -> Result<Flow> {
+pub fn handle_editor_key(
+    app: &mut App,
+    code: KeyCode,
+    modifiers: KeyModifiers,
+    redraw: &mut Redraw<'_>,
+) -> Result<Flow> {
     let ctrl = modifiers.contains(KeyModifiers::CONTROL);
     let chord = modifiers.intersects(KeyModifiers::CONTROL | KeyModifiers::ALT);
     if ctrl && matches!(code, KeyCode::Char('c')) {
@@ -89,11 +101,11 @@ pub fn handle_editor_key(app: &mut App, code: KeyCode, modifiers: KeyModifiers) 
         }
     };
 
-    perform(app, action)?;
+    perform(app, action, redraw)?;
     Ok(Flow::Continue)
 }
 
-fn perform(app: &mut App, action: Action) -> Result<()> {
+fn perform(app: &mut App, action: Action, redraw: &mut Redraw<'_>) -> Result<()> {
     match action {
         Action::None => {}
         Action::Save => save_config(app)?,
@@ -110,8 +122,12 @@ fn perform(app: &mut App, action: Action) -> Result<()> {
             }
             app.exit_edit_mode();
         }
-        Action::PullNow => sync_pull_now(app),
-        Action::CloneIfMissing => sync_clone_if_missing(app),
+        Action::TestConnection => {
+            redraw(app)?;
+            sync_run_connection_test(app);
+        }
+        Action::PullNow => sync_pull_now(app, redraw)?,
+        Action::CloneIfMissing => sync_clone_if_missing(app, redraw)?,
     }
     Ok(())
 }
@@ -392,7 +408,7 @@ fn handle_sync(editor: &mut EditorState, config: &mut Config, code: KeyCode, ctr
 
 fn activate_sync_field(editor: &mut EditorState, config: &mut Config) -> Action {
     match editor.sync_field {
-        SYNC_BTN_TEST => sync_test_connection(editor),
+        SYNC_BTN_TEST => return sync_test_connection(editor),
         SYNC_BTN_SYNC => {
             if sync_apply_form(editor, config) {
                 return Action::PullNow;
@@ -665,18 +681,26 @@ fn sync_apply_form(editor: &mut EditorState, config: &mut Config) -> bool {
     }
 }
 
-/// Probe the repo URL currently entered in the sync form.
-///
-/// Uses the URL from the form rather than the persisted config so the user
-/// can verify it before committing the change. Blocks the UI thread — fine
-/// because the libgit2 handshake is short.
-fn sync_test_connection(editor: &mut EditorState) {
+/// Announce a probe of the repo URL currently entered in the sync form; the
+/// probe itself is [`sync_run_connection_test`].
+fn sync_test_connection(editor: &mut EditorState) -> Action {
     let url = editor.sync_inputs[SYNC_REPO].trim().to_string();
     if url.is_empty() {
         editor.flash("Set a repo URL first");
-        return;
+        return Action::None;
     }
     editor.flash(format!("Reaching {} …", sync::redact_url(&url)));
+    Action::TestConnection
+}
+
+/// Uses the URL from the form rather than the persisted config so the user
+/// can verify it before committing the change. Blocks the UI thread — fine
+/// because the libgit2 handshake is short.
+fn sync_run_connection_test(app: &mut App) {
+    let Some(editor) = app.editor.as_mut() else {
+        return;
+    };
+    let url = editor.sync_inputs[SYNC_REPO].trim().to_string();
     match sync::test_connection(&url) {
         Ok(()) => editor.flash("Connection OK"),
         Err(err) => editor.flash(format!("Connection failed: {err:#}")),
@@ -693,32 +717,36 @@ fn flash(app: &mut App, msg: impl Into<String>) {
 ///
 /// Requires the form to have been applied first, so the new settings are
 /// visible to [`SyncContext::from`]. Blocks the UI thread.
-fn sync_pull_now(app: &mut App) {
+fn sync_pull_now(app: &mut App, redraw: &mut Redraw<'_>) -> Result<()> {
     let Some(sync_cfg) = app.config.sync.as_ref() else {
         flash(app, "Apply (↩) the form before syncing");
-        return;
+        return Ok(());
     };
     let Some(ctx) = SyncContext::from(sync_cfg) else {
         flash(app, "Set a repo URL first");
-        return;
+        return Ok(());
     };
     flash(app, "Syncing …");
+    redraw(app)?;
     run_sync(app, &ctx, "Sync", "Sync failed");
+    Ok(())
 }
 
 /// First-time bootstrap: clone the configured repo if the local copy is
 /// missing (or stuck in a half-cloned state). Called right after the
 /// sync form is applied so a fresh setup gets the repo on disk without
 /// the user having to leave the editor.
-fn sync_clone_if_missing(app: &mut App) {
+fn sync_clone_if_missing(app: &mut App, redraw: &mut Redraw<'_>) -> Result<()> {
     let Some(ctx) = app.config.sync.as_ref().and_then(SyncContext::from) else {
-        return;
+        return Ok(());
     };
     if sync::local_repo_ready(&ctx) {
-        return;
+        return Ok(());
     }
     flash(app, format!("Cloning into {} …", ctx.local_clone.display()));
+    redraw(app)?;
     run_sync(app, &ctx, "Cloned", "Clone failed");
+    Ok(())
 }
 
 /// Clone or pull, load the shared inventory and report the result on the
@@ -811,11 +839,81 @@ mod tests {
     }
 
     fn press(app: &mut App, code: KeyCode) -> Flow {
-        handle_editor_key(app, code, KeyModifiers::NONE).expect("key handled")
+        press_with(app, code, KeyModifiers::NONE)
     }
 
     fn press_with(app: &mut App, code: KeyCode, modifiers: KeyModifiers) -> Flow {
-        handle_editor_key(app, code, modifiers).expect("key handled")
+        handle_editor_key(app, code, modifiers, &mut |_| Ok(())).expect("key handled")
+    }
+
+    /// Presses `code` and returns the flash line as it stood at each forced
+    /// redraw, i.e. what the user gets to see before the handler returns.
+    fn press_recording_redraws(app: &mut App, code: KeyCode) -> Vec<String> {
+        let mut frames = Vec::new();
+        handle_editor_key(app, code, KeyModifiers::NONE, &mut |app| {
+            frames.push(editor(app).flash.clone().unwrap_or_default());
+            Ok(())
+        })
+        .expect("key handled");
+        frames
+    }
+
+    fn open_sync_form(app: &mut App, dir: &TempDir, field: usize) {
+        let unreachable_repo = dir.path().join("no-such-remote.git");
+        let state = app.editor.as_mut().expect("editor open");
+        state.view = EditorView::Sync;
+        state.sync_inputs[SYNC_REPO] = unreachable_repo.to_string_lossy().into_owned();
+        state.sync_inputs[crate::editor::SYNC_LOCAL] =
+            dir.path().join("clone").to_string_lossy().into_owned();
+        state.sync_field = field;
+    }
+
+    #[test]
+    fn test_button_draws_its_progress_message_before_probing() {
+        let dir = TempDir::new().expect("tempdir");
+        let mut app = editing_app(&dir);
+        open_sync_form(&mut app, &dir, SYNC_BTN_TEST);
+
+        let frames = press_recording_redraws(&mut app, KeyCode::Enter);
+        assert_eq!(frames.len(), 1);
+        assert!(frames[0].starts_with("Reaching "), "{frames:?}");
+        let result = editor(&app).flash.clone().unwrap_or_default();
+        assert!(result.starts_with("Connection failed"), "{result}");
+    }
+
+    #[test]
+    fn pull_button_draws_its_progress_message_before_syncing() {
+        let dir = TempDir::new().expect("tempdir");
+        let mut app = editing_app(&dir);
+        open_sync_form(&mut app, &dir, SYNC_BTN_SYNC);
+
+        let frames = press_recording_redraws(&mut app, KeyCode::Enter);
+        assert_eq!(frames, ["Syncing …"]);
+        let result = editor(&app).flash.clone().unwrap_or_default();
+        assert!(result.starts_with("Sync failed"), "{result}");
+    }
+
+    #[test]
+    fn applying_the_sync_form_draws_the_clone_message_before_cloning() {
+        let dir = TempDir::new().expect("tempdir");
+        let mut app = editing_app(&dir);
+        open_sync_form(&mut app, &dir, SYNC_REPO);
+
+        let frames = press_recording_redraws(&mut app, KeyCode::Enter);
+        assert_eq!(frames.len(), 1);
+        assert!(frames[0].starts_with("Cloning into "), "{frames:?}");
+        let result = editor(&app).flash.clone().unwrap_or_default();
+        assert!(result.starts_with("Clone failed"), "{result}");
+    }
+
+    #[test]
+    fn keys_without_blocking_work_do_not_force_a_redraw() {
+        let dir = TempDir::new().expect("tempdir");
+        let mut app = editing_app(&dir);
+        assert!(press_recording_redraws(&mut app, KeyCode::Down).is_empty());
+        open_sync_form(&mut app, &dir, SYNC_BTN_TEST);
+        app.editor.as_mut().expect("editor open").sync_inputs[SYNC_REPO].clear();
+        assert!(press_recording_redraws(&mut app, KeyCode::Enter).is_empty());
     }
 
     fn editor(app: &App) -> &EditorState {
