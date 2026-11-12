@@ -79,6 +79,8 @@ From the GitHub UI:
    - creates an annotated `vX.Y.Z` tag and pushes both,
    - calls `gh release create vX.Y.Z --generate-notes` and attaches all five archives plus `checksums.txt`.
 
+The `version` and `bump` inputs and `github.ref` reach the workflow's shell steps as step-level `env:` variables rather than being interpolated into the `run:` scripts, so an input value is never parsed as shell code; the `commitlint` job in `ci.yml` receives the pull-request SHAs the same way.
+
 No human edits `Cargo.toml`'s version directly — the workflow owns it. To prepare a major release, write commits with `feat!:` or a `BREAKING CHANGE:` footer so reviewers know what's coming, then trigger the workflow with `bump: major` (or pass the exact `version`).
 
 ## Project layout

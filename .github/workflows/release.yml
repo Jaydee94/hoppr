@@ -37,8 +37,10 @@ jobs:
     steps:
       - name: guard against non-main branches
         if: github.ref != 'refs/heads/main'
+        env:
+          TRIGGER_REF: ${{ github.ref }}
         run: |
-          echo "::error ::Release must run against main, got ${{ github.ref }}."
+          echo "::error ::Release must run against main, got ${TRIGGER_REF}."
           exit 1
       - uses: actions/checkout@v7
         with:
@@ -46,12 +48,14 @@ jobs:
       - id: next
         name: compute next version
         shell: bash
+        env:
+          INPUT_VERSION: ${{ inputs.version }}
+          INPUT_BUMP: ${{ inputs.bump }}
         run: |
           set -euo pipefail
           PREVIOUS_TAG="$(git tag --list 'v*' --sort=-v:refname | head -n1 || true)"
           echo "previous_tag=$PREVIOUS_TAG" >> "$GITHUB_OUTPUT"
 
-          INPUT_VERSION="${{ inputs.version }}"
           INPUT_VERSION="${INPUT_VERSION#v}"
 
           if [ -n "$INPUT_VERSION" ]; then
@@ -67,7 +71,7 @@ jobs:
               BASE="${PREVIOUS_TAG#v}"
             fi
             IFS='.' read -r MAJ MIN PAT <<< "$BASE"
-            case "${{ inputs.bump }}" in
+            case "$INPUT_BUMP" in
               major) MAJ=$((MAJ + 1)); MIN=0; PAT=0 ;;
               minor) MIN=$((MIN + 1)); PAT=0 ;;
               patch) PAT=$((PAT + 1)) ;;
