@@ -53,16 +53,22 @@ npx commitlint --from=origin/main         # lint the commits on your branch
 
 ## Release process
 
-Releases are **manual**. Every triggered run always builds, tags, and publishes — there is no "no qualifying commits, skipping" branch.
+Releases are **manual** and driven by [semantic-release](https://semantic-release.gitbook.io/), configured in [`.releaserc`](../.releaserc) — the same setup as kubeseal-webgui. The version is **derived from the Conventional Commits** since the last `v*` tag; it cannot be typed in.
+
+| Commit                                         | Bump  |
+|------------------------------------------------|-------|
+| `BREAKING CHANGE:` footer or `!` (`feat!:`)    | major |
+| `feat`                                         | minor |
+| `fix`, `perf`, `revert`, `chore` (incl. `chore(deps)`), `deps` | patch |
+| `docs`, `style`, `refactor`, `test`, `build`, `ci` | none on their own |
+
+If nothing since the last tag qualifies, the run ends after `plan` with "nothing to release" — no build, no tag.
 
 From the GitHub UI:
 
 1. Go to **Actions → release** (the workflow lives in [`.github/workflows/release.yml`](../.github/workflows/release.yml)).
-2. Click **Run workflow** on the `main` branch and pick the inputs:
-   - **`bump`** (default `patch`) — `patch` / `minor` / `major`. Used when `version` is empty.
-   - **`version`** (optional) — explicit semver like `1.2.3`. When set, overrides `bump`.
-   - **`dry_run`** (default `false`) — when on, the workflow only prints the planned version and exits.
-3. The `plan` job picks the next version: explicit input if given, otherwise the highest existing `v*` tag bumped by `bump`. If there is no tag yet, the current `Cargo.toml` version is the baseline. The job refuses to overwrite an existing tag.
+2. Click **Run workflow** on the `main` branch. The only input is **`dry_run`** (default `false`): when on, the workflow stops after `plan`.
+3. The `plan` job runs semantic-release in dry-run mode and writes the planned version and release notes to the run summary.
 4. The `build` matrix compiles release binaries for:
    - `x86_64-unknown-linux-musl` → `hoppr-linux-x86_64.tar.gz`
    - `aarch64-unknown-linux-musl` → `hoppr-linux-aarch64.tar.gz` (cross-compiled)
@@ -71,17 +77,16 @@ From the GitHub UI:
    - `x86_64-pc-windows-msvc` → `hoppr-windows-x86_64.zip`
 
    Each build pins `Cargo.toml` to the planned version locally so the binary's `--version` matches the tag.
-5. The `publish` job:
-   - downloads every artifact and computes `checksums.txt` (SHA-256),
-   - bumps `Cargo.toml` + `Cargo.lock` on `main`,
-   - prepends a new section to `CHANGELOG.md` with the commits since the previous tag,
-   - commits `chore(release): vX.Y.Z [skip ci]`,
-   - creates an annotated `vX.Y.Z` tag and pushes both,
-   - calls `gh release create vX.Y.Z --generate-notes` and attaches all five archives plus `checksums.txt`.
+5. The `publish` job computes `checksums.txt` (SHA-256) and runs semantic-release for real, which:
+   - refuses to continue if `main` now resolves to a different version than `plan` did (a commit landed in between) — re-run the workflow,
+   - bumps `Cargo.toml` + `Cargo.lock`,
+   - prepends the release notes to `CHANGELOG.md`,
+   - commits `chore(release): vX.Y.Z [skip ci]` to `main`, tags `vX.Y.Z`, and pushes both,
+   - creates the GitHub Release with notes grouped by commit type and attaches all five archives plus `checksums.txt`.
 
-The `version` and `bump` inputs and `github.ref` reach the workflow's shell steps as step-level `env:` variables rather than being interpolated into the `run:` scripts, so an input value is never parsed as shell code; the `commitlint` job in `ci.yml` receives the pull-request SHAs the same way.
+Building happens before anything is tagged, so a failed build leaves `main` and the tags untouched. The workflow only uses `GITHUB_TOKEN`: unlike kubeseal-webgui no downstream workflow is triggered by the tag push, so no personal access token is needed. The `github.ref` guard reaches its shell step as a step-level `env:` variable rather than being interpolated into the `run:` script; the `commitlint` job in `ci.yml` receives the pull-request SHAs the same way.
 
-No human edits `Cargo.toml`'s version directly — the workflow owns it. To prepare a major release, write commits with `feat!:` or a `BREAKING CHANGE:` footer so reviewers know what's coming, then trigger the workflow with `bump: major` (or pass the exact `version`).
+No human edits `Cargo.toml`'s version directly — the workflow owns it. To ship a major release, land a commit with `feat!:` **and** a `BREAKING CHANGE:` footer; to ship a minor, land a `feat`.
 
 ## Project layout
 

@@ -3,17 +3,8 @@ name: release
 on:
   workflow_dispatch:
     inputs:
-      bump:
-        description: "Version bump (ignored if 'version' is provided)"
-        type: choice
-        options: [patch, minor, major]
-        default: patch
-      version:
-        description: "Explicit version, e.g. 1.2.3 (overrides 'bump')"
-        type: string
-        default: ""
       dry_run:
-        description: "Print the plan only — do not build, tag, or publish"
+        description: "Print the planned version and release notes only — do not build, tag, or publish"
         type: boolean
         default: false
 
@@ -24,16 +15,26 @@ concurrency:
   group: release
   cancel-in-progress: false
 
+env:
+  # Kept identical in both semantic-release runs so the dry run in `plan`
+  # resolves exactly the same plugin set as the real run in `publish`.
+  SEMANTIC_RELEASE_PLUGINS: |
+    @semantic-release/exec@7.1.0
+    @semantic-release/changelog@7.0.0
+    @semantic-release/git@11.0.1
+    conventional-changelog-conventionalcommits@9.3.1
+
 jobs:
-  # ── Decide which version we're about to ship. Single source of truth for
-  #    every downstream job. ────────────────────────────────────────────────
+  # ── semantic-release dry run: derive the next version from the
+  #    Conventional Commits since the last v* tag (see .releaserc). Single
+  #    source of truth for every downstream job. ───────────────────────────
   plan:
     name: plan release
     runs-on: ubuntu-latest
     outputs:
-      version: ${{ steps.next.outputs.version }}
-      tag: ${{ steps.next.outputs.tag }}
-      previous_tag: ${{ steps.next.outputs.previous_tag }}
+      published: ${{ steps.semrel.outputs.new_release_published }}
+      version: ${{ steps.semrel.outputs.new_release_version }}
+      previous_tag: ${{ steps.semrel.outputs.last_release_git_tag }}
     steps:
       - name: guard against non-main branches
         if: github.ref != 'refs/heads/main'
@@ -45,48 +46,31 @@ jobs:
       - uses: actions/checkout@v7
         with:
           fetch-depth: 0
-      - id: next
-        name: compute next version
-        shell: bash
+      - id: semrel
+        name: semantic-release (dry run)
+        uses: cycjimmy/semantic-release-action@v8.1.4
+        with:
+          dry_run: true
+          extra_plugins: ${{ env.SEMANTIC_RELEASE_PLUGINS }}
         env:
-          INPUT_VERSION: ${{ inputs.version }}
-          INPUT_BUMP: ${{ inputs.bump }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: summary
+        env:
+          PUBLISHED: ${{ steps.semrel.outputs.new_release_published }}
+          VERSION: ${{ steps.semrel.outputs.new_release_version }}
+          PREVIOUS: ${{ steps.semrel.outputs.last_release_git_tag }}
+          NOTES: ${{ steps.semrel.outputs.new_release_notes }}
         run: |
-          set -euo pipefail
-          PREVIOUS_TAG="$(git tag --list 'v*' --sort=-v:refname | head -n1 || true)"
-          echo "previous_tag=$PREVIOUS_TAG" >> "$GITHUB_OUTPUT"
-
-          INPUT_VERSION="${INPUT_VERSION#v}"
-
-          if [ -n "$INPUT_VERSION" ]; then
-            if ! [[ "$INPUT_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-              echo "::error ::Explicit version '$INPUT_VERSION' is not semver MAJOR.MINOR.PATCH."
-              exit 1
-            fi
-            VERSION="$INPUT_VERSION"
-          else
-            if [ -z "$PREVIOUS_TAG" ]; then
-              BASE="$(grep -E '^version[[:space:]]*=' Cargo.toml | head -n1 | awk -F\" '{print $2}')"
-            else
-              BASE="${PREVIOUS_TAG#v}"
-            fi
-            IFS='.' read -r MAJ MIN PAT <<< "$BASE"
-            case "$INPUT_BUMP" in
-              major) MAJ=$((MAJ + 1)); MIN=0; PAT=0 ;;
-              minor) MIN=$((MIN + 1)); PAT=0 ;;
-              patch) PAT=$((PAT + 1)) ;;
-            esac
-            VERSION="${MAJ}.${MIN}.${PAT}"
+          if [ "$PUBLISHED" != "true" ]; then
+            echo "::notice ::No release-worthy commits since ${PREVIOUS:-the beginning}; nothing to release."
+            exit 0
           fi
-
-          if git rev-parse -q --verify "refs/tags/v${VERSION}" >/dev/null; then
-            echo "::error ::Tag v${VERSION} already exists. Pass a different 'version' or bump."
-            exit 1
-          fi
-
-          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
-          echo "tag=v$VERSION" >> "$GITHUB_OUTPUT"
-          echo "::notice ::Planning release v${VERSION} (previous: ${PREVIOUS_TAG:-none}, dry_run: ${{ github.event.inputs.dry_run }})."
+          echo "::notice ::Planning release v${VERSION} (previous: ${PREVIOUS:-none})."
+          {
+            echo "## Planned release v${VERSION}"
+            echo
+            echo "$NOTES"
+          } >> "$GITHUB_STEP_SUMMARY"
 
   # ── Cross-platform build matrix. Pins Cargo.toml to the planned version
   #    locally so binaries report the right --version even before the bump
@@ -94,7 +78,7 @@ jobs:
   build:
     name: build ${{ matrix.target }}
     needs: plan
-    if: ${{ github.event.inputs.dry_run != 'true' }}
+    if: ${{ needs.plan.outputs.published == 'true' && inputs.dry_run != true }}
     runs-on: ${{ matrix.runner }}
     strategy:
       fail-fast: false
@@ -181,25 +165,22 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
-  # ── Tag main, push the version bump, create the GitHub Release, attach
-  #    every binary + checksums. Always runs after a successful build. ─────
+  # ── semantic-release for real: bump Cargo.toml + Cargo.lock, prepend
+  #    CHANGELOG.md, commit, tag, push, and create the GitHub Release with
+  #    every binary + checksums attached. ──────────────────────────────────
   publish:
     name: publish release
     needs: [plan, build]
-    if: ${{ github.event.inputs.dry_run != 'true' }}
+    if: ${{ needs.plan.outputs.published == 'true' && inputs.dry_run != true }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
         with:
           fetch-depth: 0
-          token: ${{ secrets.GITHUB_TOKEN }}
-          persist-credentials: true
       - uses: actions/download-artifact@v8
         with:
           path: dist
           merge-multiple: true
-      - name: list binaries
-        run: ls -la dist
       - name: checksums
         shell: bash
         run: |
@@ -208,77 +189,16 @@ jobs:
           sha256sum hoppr-* > checksums.txt
           cat checksums.txt
       - uses: dtolnay/rust-toolchain@stable
-      - name: bump Cargo.toml + Cargo.lock
-        shell: bash
-        run: |
-          set -euo pipefail
-          VERSION="${{ needs.plan.outputs.version }}"
-          sed -i.bak -E "s/^version = \".*\"/version = \"$VERSION\"/" Cargo.toml
-          rm Cargo.toml.bak
-          cargo update -p hoppr
-      - name: prepend CHANGELOG
-        shell: bash
-        run: |
-          set -euo pipefail
-          VERSION="${{ needs.plan.outputs.version }}"
-          PREV="${{ needs.plan.outputs.previous_tag }}"
-          DATE="$(date -u +%Y-%m-%d)"
-          {
-            echo "## v${VERSION} — ${DATE}"
-            echo
-            if [ -n "$PREV" ]; then
-              git log --pretty=format:'- %s (%h)' "${PREV}..HEAD"
-            else
-              git log --pretty=format:'- %s (%h)'
-            fi
-            echo
-            echo
-            if [ -f CHANGELOG.md ]; then cat CHANGELOG.md; fi
-          } > CHANGELOG.md.new
-          mv CHANGELOG.md.new CHANGELOG.md
-      - name: commit, tag, push
-        shell: bash
+      - name: semantic-release
+        uses: cycjimmy/semantic-release-action@v8.1.4
+        with:
+          extra_plugins: ${{ env.SEMANTIC_RELEASE_PLUGINS }}
         env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GIT_AUTHOR_NAME: github-actions[bot]
           GIT_AUTHOR_EMAIL: 41898282+github-actions[bot]@users.noreply.github.com
           GIT_COMMITTER_NAME: github-actions[bot]
           GIT_COMMITTER_EMAIL: 41898282+github-actions[bot]@users.noreply.github.com
-        run: |
-          set -euo pipefail
-          VERSION="${{ needs.plan.outputs.version }}"
-          git add Cargo.toml Cargo.lock CHANGELOG.md
-          git commit -m "chore(release): v${VERSION} [skip ci]"
-          git tag -a "v${VERSION}" -m "release v${VERSION}"
-          git push origin HEAD:main
-          git push origin "v${VERSION}"
-      - name: create GitHub Release
-        shell: bash
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          set -euo pipefail
-          VERSION="${{ needs.plan.outputs.version }}"
-          PREV="${{ needs.plan.outputs.previous_tag }}"
-          ARGS=(--title "v${VERSION}" --generate-notes)
-          if [ -n "$PREV" ]; then ARGS+=(--notes-start-tag "$PREV"); fi
-          gh release create "v${VERSION}" "${ARGS[@]}" \
-            dist/hoppr-linux-x86_64.tar.gz \
-            dist/hoppr-linux-aarch64.tar.gz \
-            dist/hoppr-macos-x86_64.tar.gz \
-            dist/hoppr-macos-aarch64.tar.gz \
-            dist/hoppr-windows-x86_64.zip \
-            dist/checksums.txt
-          echo "::notice ::Released v${VERSION}: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/releases/tag/v${VERSION}"
-
-  # ── Dry-run: print the plan and exit. No builds, no tags, no publish.
-  dry-run:
-    name: dry-run summary
-    needs: plan
-    if: ${{ github.event.inputs.dry_run == 'true' }}
-    runs-on: ubuntu-latest
-    steps:
-      - name: summary
-        run: |
-          echo "Dry run only — no build, no tag, no GitHub Release."
-          echo "Next version:  ${{ needs.plan.outputs.tag }}"
-          echo "Previous tag:  ${{ needs.plan.outputs.previous_tag }}"
+          # Read by verifyReleaseCmd in .releaserc: refuse to publish if a
+          # commit landed on main after `plan` and changed the version.
+          EXPECTED_VERSION: ${{ needs.plan.outputs.version }}

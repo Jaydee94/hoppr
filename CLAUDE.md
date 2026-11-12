@@ -60,7 +60,7 @@ Every commit message must follow [Conventional Commits](https://www.conventional
 Allowed types: `feat`, `fix`, `perf`, `refactor`, `docs`, `test`, `chore`, `ci`, `build`, `style`, `revert`.
 Breaking changes use `!` after the type (e.g. `feat!: drop ssh fallback`) **and** a `BREAKING CHANGE:` footer.
 
-The manual release workflow (see [`docs/development.md`](docs/development.md)) auto-generates `CHANGELOG.md` and the GitHub release notes from these commits.
+The manual release workflow (see [`docs/development.md`](docs/development.md)) derives the next version from these commits and auto-generates `CHANGELOG.md` and the GitHub release notes from them.
 
 ### English only
 
@@ -93,17 +93,14 @@ All commits, code comments, docs, error messages and PR descriptions are written
 ## CI / release
 
 - **CI** (`.github/workflows/ci.yml`) runs fmt, clippy with `-D warnings`, tests, and a release build on every push and PR.
-- **Release** (`.github/workflows/release.yml`) is **manual only** — `workflow_dispatch`. Every triggered run always builds and publishes. Inputs:
-  - `bump` (`patch`/`minor`/`major`, default `patch`) — used when `version` is empty.
-  - `version` (optional explicit semver) — overrides `bump`.
-  - `dry_run` (boolean) — print the plan and exit.
+- **Release** (`.github/workflows/release.yml`) is **manual only** — `workflow_dispatch` — and driven by semantic-release (`.releaserc`). The version is derived from the Conventional Commits since the last `v*` tag (`feat` → minor, `fix`/`perf`/`chore` → patch, breaking → major); with no qualifying commit nothing is released. The only input is `dry_run` (stop after planning).
 
   On a non-dry run it:
-  1. computes the next version from the latest `v*` tag (or `Cargo.toml` if none) and the chosen bump,
+  1. runs semantic-release in dry-run mode to plan the next version,
   2. builds binaries for Linux x86_64 + aarch64 (musl), macOS x86_64 + aarch64, Windows x86_64,
-  3. updates `Cargo.toml`, `Cargo.lock`, and prepends a section to `CHANGELOG.md`,
+  3. runs semantic-release for real: aborts if the planned version changed, updates `Cargo.toml`, `Cargo.lock`, prepends to `CHANGELOG.md`,
   4. commits `chore(release): vX.Y.Z [skip ci]`, tags `vX.Y.Z`, and pushes both,
-  5. creates a GitHub Release via `gh release create --generate-notes` and attaches every archive + `checksums.txt`.
+  5. creates the GitHub Release with grouped notes and attaches every archive + `checksums.txt`.
 
 Never push to a release branch directly — open a PR, get it merged into `main`, then trigger the release workflow.
 
@@ -125,5 +122,6 @@ Never push to a release branch directly — open a PR, get it merged into `main`
 - `commitlint.config.cjs` — commit message rules
 - `rust-toolchain.toml` — toolchain channel (`stable`) and components
 - `.github/workflows/*.yml` — CI + release surface
+- `.releaserc` — semantic-release config (version rules, release notes, assets)
 
 Modifying these files requires the matching update to `docs/development.md`.
