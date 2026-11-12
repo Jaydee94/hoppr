@@ -102,4 +102,4 @@ Justify it in the PR description. We keep `cargo build` under 2 minutes cold. He
 
 - The TUI runs in a real terminal — `cargo test` covers a snapshot via `TestBackend`, but visual tweaks need a human eye.
 - For the in-TUI editor, the `tempfile` crate is gold for round-tripping the YAML in tests.
-- When debugging sync, set `RUST_LOG=trace` (not yet wired but planned) or shell into the local clone (`hoppr sync status` prints the path).
+- When debugging sync, shell into the local clone (`hoppr sync status` prints the path).
