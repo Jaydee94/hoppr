@@ -1,3 +1,75 @@
+## [1.2.4](https://github.com/Jaydee94/hoppr/compare/v1.2.3...v1.2.4) (2026-11-12)
+
+### 🐛 Bug Fixes
+
+* **cli:** emit real JSON from list and history ([7b6ad20](https://github.com/Jaydee94/hoppr/commit/7b6ad2067efc26709949042ae5d8821220ce59b7))
+* **cli:** pass the remote shell's exit code through hoppr connect ([43cbe76](https://github.com/Jaydee94/hoppr/commit/43cbe76cb1cca8d3a4d3e1d98c45179165ff9c7e))
+* **cli:** stop the config and category short flags from colliding ([c13f368](https://github.com/Jaydee94/hoppr/commit/c13f3689feadb68225f4768f4d0e671d10c8b7b4))
+* **cli:** strip sync.repo credentials from the printed config ([e53833e](https://github.com/Jaydee94/hoppr/commit/e53833efb0a13c20a9e0e9930bf403ff7db1e429))
+* **editor:** apply the defaults and sync forms when leaving them with esc ([614305a](https://github.com/Jaydee94/hoppr/commit/614305a9fb8353b19ac3517f8f5b945766631032))
+* **editor:** apply the open form on ctrl+s and keep chords out of text inputs ([b3cee62](https://github.com/Jaydee94/hoppr/commit/b3cee620c5b7979aa79b5f1af2e870e6b680313a))
+* **editor:** draw a progress message before the auto-push on save ([12e9b49](https://github.com/Jaydee94/hoppr/commit/12e9b49ee7966fb85e906252587792e270669981))
+* **editor:** draw sync progress messages before the blocking git call ([1538142](https://github.com/Jaydee94/hoppr/commit/1538142db3ba549efdfdda01570a30636fab4bcb))
+* **editor:** ignore ctrl and alt chords on plain-letter list keys ([0105dc3](https://github.com/Jaydee94/hoppr/commit/0105dc33a4e4c680d99a6467eb45d288664ba571))
+* **editor:** keep stars and history when a host or category is renamed ([b67b2a3](https://github.com/Jaydee94/hoppr/commit/b67b2a3d68579d884beeede793c8d5e78729e0e6))
+* **editor:** keep template args when applying the connection defaults ([1e4c3b2](https://github.com/Jaydee94/hoppr/commit/1e4c3b2c7dc8818bd9f016e489af7bd7a8d19829))
+* **editor:** name a failed auto-push in the editor footer ([112ecda](https://github.com/Jaydee94/hoppr/commit/112ecdab0ef93af8189021716d5b738993edfc7d))
+* **editor:** name ctrl+s, not s, in the save reminders ([374488f](https://github.com/Jaydee94/hoppr/commit/374488fb76826f5721818e97082838dac537e44f))
+* **favorites:** keep stars apart when a name contains a slash ([0285e38](https://github.com/Jaydee94/hoppr/commit/0285e385fc6c7c41a154a7e9377b13743a55a925))
+* **favorites:** match legacy star keys again after an in-session pull ([7883377](https://github.com/Jaydee94/hoppr/commit/788337745b914e9cc5afe6886c9027ae38f69191))
+* **history,favorites:** save atomically instead of truncating in place ([847c448](https://github.com/Jaydee94/hoppr/commit/847c4483775a9e41f7e4cd51958cf5a43f619da4))
+* **history:** dedupe recorded connections per category ([d800c26](https://github.com/Jaydee94/hoppr/commit/d800c26aa6e523f08074608e2fade53f4a57d4a5))
+* **storage:** create the owner-only config file with mode 0600 ([d0d3a30](https://github.com/Jaydee94/hoppr/commit/d0d3a30d257a8381465ee4576d4a0f8b4c75b66c))
+* **sync:** detect public keys by file extension, ignoring case ([4bf6c17](https://github.com/Jaydee94/hoppr/commit/4bf6c17ce192ed47b9a092b12029edc88161c48a))
+* **sync:** fall through to key files and tokens when a credential fails ([b076d1b](https://github.com/Jaydee94/hoppr/commit/b076d1b9476efd7d22875f1b4ce3040bd9a86c5d))
+* **sync:** only treat an @ inside the url authority as userinfo ([a9c40c6](https://github.com/Jaydee94/hoppr/commit/a9c40c6e5584be783aafda1f822a9f7a47d38c66))
+* **sync:** redact credentials from the push summary and test flash ([36e1aeb](https://github.com/Jaydee94/hoppr/commit/36e1aebb14e51ec2827abb636584f4b770411e6e))
+* **sync:** redact passwords in ssh and other non-http repo urls ([493e3d9](https://github.com/Jaydee94/hoppr/commit/493e3d9cb328ce028c3bc0f74ccdd285807c69df))
+* **tui:** do not quit on ctrl+alt+c ([128e7a5](https://github.com/Jaydee94/hoppr/commit/128e7a50d9d59e58ff86f3e30e0a12a278e2ef11))
+* **tui:** keep ctrl and alt chords away from the plain-letter bindings ([85c1605](https://github.com/Jaydee94/hoppr/commit/85c1605a016d52206913ad0bff1d669d8bb8d156))
+* **tui:** keep running when the connect command cannot be started ([75b737d](https://github.com/Jaydee94/hoppr/commit/75b737d4458a87bc7c7b873566c95deb0365a372))
+* **tui:** let a slash be typed into the browse search ([d90a1be](https://github.com/Jaydee94/hoppr/commit/d90a1beb12f08f66b2fb19ff7c58a7a01f496800))
+
+### 📚 Documentation
+
+* align contributor docs with the actual commit tooling ([d68e7ab](https://github.com/Jaydee94/hoppr/commit/d68e7abfb9ee146e17c045f1f4acc11145b3b594))
+* **cli:** correct the documented exit codes ([4bcca3b](https://github.com/Jaydee94/hoppr/commit/4bcca3bdc8a2e4f7c8f98a58e90eeee9936e8b50))
+* drop the RUST_LOG tip that nothing implements ([b727696](https://github.com/Jaydee94/hoppr/commit/b727696f8b2fff8ac70a8b27a1a14de7f4b23d4d))
+* remove the obsolete install-script plan and spec ([0058640](https://github.com/Jaydee94/hoppr/commit/005864051d7846cbb642b704a6e0e3d06f3a6a71))
+
+### 📦 Chores
+
+* **deps:** update rust crate serde_json to v1.0.154 ([7482df4](https://github.com/Jaydee94/hoppr/commit/7482df4595e56c583888de5ffbaeabec72a113d6))
+
+### ♻️ Code Refactoring
+
+* apply readability fixes from clippy pedantic ([093bcbf](https://github.com/Jaydee94/hoppr/commit/093bcbf076769b27dccf700eb13b9ed6afed846d))
+* **app:** remove the never-constructed warn status severity ([946e9c4](https://github.com/Jaydee94/hoppr/commit/946e9c471e6b0e0403bb5687727bfa9cd947618f))
+* **config:** share YAML load and atomic save through a storage module ([f0f953d](https://github.com/Jaydee94/hoppr/commit/f0f953dd0a773c2ae7b1f55bd82bc75040b0ce83))
+* drop needless Result wrappers and an unused parameter in main ([3129a93](https://github.com/Jaydee94/hoppr/commit/3129a93136e25d122d7790e0a7617abd732de247))
+* **editor:** index sync form inputs with named constants ([d75f564](https://github.com/Jaydee94/hoppr/commit/d75f5649d23fdd5f1dc0692fbbc9925e037ac337))
+* move settings-editor key handling into an input module ([09458d1](https://github.com/Jaydee94/hoppr/commit/09458d10f1ba7eb01bd0d1a3ffdb0434d1df53ce))
+* remove unused functions, constants and the FormMode enum ([c8fe6f6](https://github.com/Jaydee94/hoppr/commit/c8fe6f697ffeb0431f60564776052e7acdf2cb46))
+* split browse-mode key handling out of the event loop ([02aa123](https://github.com/Jaydee94/hoppr/commit/02aa1232ba553a8ad4db0821705ac0f7ac54d3ca))
+* **sync:** drop the never-read SyncContext::auto_push field ([f164d6b](https://github.com/Jaydee94/hoppr/commit/f164d6b5d797845a8027873ab14bd144de1c5081))
+* **theme:** remove unused border_strong token and style helpers ([add1c2d](https://github.com/Jaydee94/hoppr/commit/add1c2d6ecb83d4b8e13c18dedc63e6b5032f7a3))
+* **ui:** derive the sync form layout from its label table ([33d4a2a](https://github.com/Jaydee94/hoppr/commit/33d4a2a9b7baa7fc640a4ca395ecbe7a5151bc6b))
+* **ui:** route styling through theme helpers and table-driven hints ([676323c](https://github.com/Jaydee94/hoppr/commit/676323c8a7223e50032a10db82acc7867c5ceb14))
+
+### 👷 Build System
+
+* declare the real minimum supported Rust version (1.88) ([5011651](https://github.com/Jaydee94/hoppr/commit/5011651c92c2301077ad22114bec509efc956d4e))
+* **deps:** refresh Cargo.lock with cargo update ([7e65e16](https://github.com/Jaydee94/hoppr/commit/7e65e168901204b959944740b39eb9a3ab8892fe))
+* **deps:** remove unused thiserror dependency ([1eb876f](https://github.com/Jaydee94/hoppr/commit/1eb876f477f5d2249dac31101dcb4d01e6efffb5))
+* **deps:** replace archived serde_yaml with yaml_serde ([05bdd63](https://github.com/Jaydee94/hoppr/commit/05bdd63d80d37a09333f134cef187c266813bb40))
+* migrate to the Rust 2024 edition ([56e2826](https://github.com/Jaydee94/hoppr/commit/56e2826b16cc29f0c6bea9d3dc3f8a26829dfbec))
+
+### 🔧 CI/CD
+
+* pass workflow inputs to shell steps through env ([de03b80](https://github.com/Jaydee94/hoppr/commit/de03b80bc85a31c6e35c2a1fd17ae95bf5ce04b5))
+* **release:** build macOS binaries on macos-latest ([1ab437e](https://github.com/Jaydee94/hoppr/commit/1ab437e2061028a494e5dce86755035d5107a2e7))
+* **release:** derive versions with semantic-release ([6e8791b](https://github.com/Jaydee94/hoppr/commit/6e8791b4ae09d1546b914b6e5593af6d981ce974))
+
 ## v1.2.3 — 2026-11-04
 
 - Merge pull request #92 from Jaydee94/renovate/node-26.x (7c65a56)
@@ -202,4 +274,3 @@
 - feat: implement modular hoppr TUI vm manager scaffold (11af3a2)
 - Initial plan (246052f)
 - Initial commit (1d217ab)
-
