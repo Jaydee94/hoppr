@@ -172,9 +172,14 @@ impl App {
         config_path: PathBuf,
         sync_status: SyncStatus,
         history: HistoryStore,
-        favorites: FavoritesStore,
+        mut favorites: FavoritesStore,
         terminal: TerminalLauncher,
     ) -> Self {
+        favorites.adopt_legacy_keys(|category, host| {
+            config.categories.iter().any(|candidate| {
+                candidate.name == category && candidate.hosts.iter().any(|h| h.name == host)
+            })
+        });
         let mut categories_state = ListState::default();
         let virt_count: usize =
             usize::from(!history.is_empty()) + usize::from(!favorites.is_empty());
@@ -579,6 +584,37 @@ mod tests {
     };
 
     use super::App;
+
+    #[test]
+    fn startup_matches_legacy_star_keys_against_the_config() {
+        let dir = tempfile::TempDir::new().expect("tempdir");
+        let favorites_path = dir.path().join("favorites.yaml");
+        std::fs::write(&favorites_path, "favorites:\n- eu/west/db\n").expect("write");
+        let category = |name: &str, host: &str| Category {
+            name: name.into(),
+            icon: None,
+            hosts: vec![Host {
+                name: host.into(),
+                ip: "10.0.0.1".into(),
+                ..Host::default()
+            }],
+        };
+        let config = Config {
+            categories: vec![category("eu/west", "db"), category("eu", "west")],
+            ..Config::default()
+        };
+        let app = App::new(
+            config,
+            dir.path().join("config.yaml"),
+            SyncStatus::Disabled,
+            HistoryStore::load(&dir.path().join("history.yaml")),
+            FavoritesStore::load(&favorites_path),
+            TerminalLauncher::detect(None),
+        );
+        assert!(app.favorites.is_favorite("eu/west", "db"));
+        assert!(!app.favorites.is_favorite("eu", "west"));
+        assert!(!app.favorites.is_empty());
+    }
 
     fn fixture() -> App {
         let config = Config {
