@@ -1,0 +1,55 @@
+{
+  "branches": ["main"],
+  "tagFormat": "v${version}",
+  "plugins": [
+    ["@semantic-release/commit-analyzer", {
+      "preset": "conventionalcommits",
+      "releaseRules": [
+        {"type": "chore", "release": "patch"},
+        {"type": "deps", "release": "patch"}
+      ]
+    }],
+    ["@semantic-release/release-notes-generator", {
+      "preset": "conventionalcommits",
+      "presetConfig": {
+        "types": [
+          {"type": "feat", "section": "✨ Features"},
+          {"type": "fix", "section": "🐛 Bug Fixes"},
+          {"type": "perf", "section": "🚀 Performance Improvements"},
+          {"type": "revert", "section": "⏪ Reverts"},
+          {"type": "docs", "section": "📚 Documentation"},
+          {"type": "style", "section": "💎 Styles"},
+          {"type": "chore", "section": "📦 Chores"},
+          {"type": "refactor", "section": "♻️ Code Refactoring"},
+          {"type": "test", "section": "✅ Tests"},
+          {"type": "build", "section": "👷 Build System"},
+          {"type": "ci", "section": "🔧 CI/CD"}
+        ]
+      }
+    }],
+    ["@semantic-release/exec", {
+      "verifyReleaseCmd": "[ -z \"$EXPECTED_VERSION\" ] || [ \"$EXPECTED_VERSION\" = \"${nextRelease.version}\" ] || { echo \"Planned v$EXPECTED_VERSION but main now resolves to v${nextRelease.version}; the binaries were built for the planned version. Re-run the workflow.\" >&2; exit 1; }",
+      "prepareCmd": "sed -i -E '0,/^version = \".*\"/s//version = \"${nextRelease.version}\"/' Cargo.toml && cargo update -p hoppr"
+    }],
+    ["@semantic-release/changelog", {
+      "changelogFile": "CHANGELOG.md"
+    }],
+    ["@semantic-release/git", {
+      "assets": ["Cargo.toml", "Cargo.lock", "CHANGELOG.md"],
+      "message": "chore(release): v${nextRelease.version} [skip ci]"
+    }],
+    ["@semantic-release/github", {
+      "assets": [
+        {"path": "dist/hoppr-linux-x86_64.tar.gz"},
+        {"path": "dist/hoppr-linux-aarch64.tar.gz"},
+        {"path": "dist/hoppr-macos-x86_64.tar.gz"},
+        {"path": "dist/hoppr-macos-aarch64.tar.gz"},
+        {"path": "dist/hoppr-windows-x86_64.zip"},
+        {"path": "dist/checksums.txt"}
+      ],
+      "successComment": false,
+      "failComment": false,
+      "releasedLabels": false
+    }]
+  ]
+}
