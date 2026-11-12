@@ -22,6 +22,7 @@ fuzzy-matcher = "0.3"
 git2 = { version = "0.21", default-features = false, features = ["https", "ssh", "vendored-libgit2", "vendored-openssl"] }
 ratatui = "0.30"
 serde = { version = "1", features = ["derive"] }
+serde_json = "1"
 shellexpand = "3"
 time = { version = "0.3", features = ["formatting", "macros", "local-offset"] }
 unicode-width = "0.2"

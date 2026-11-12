@@ -1,6 +1,5 @@
 use std::{
     cmp::Reverse,
-    fmt::Write as _,
     io::{self, Stdout, Write},
     path::{Path, PathBuf},
     process::{Command, Stdio},
@@ -22,6 +21,7 @@ use crossterm::{
 };
 use fuzzy_matcher::{FuzzyMatcher, skim::SkimMatcherV2};
 use ratatui::{Terminal, backend::CrosstermBackend};
+use serde::Serialize;
 
 mod app;
 mod cli;
@@ -44,7 +44,7 @@ use cli::{
 use config::{Category, Config, Host, Inventory, default_config_path};
 use editor::EditorView;
 use favorites::FavoritesStore;
-use history::{HistoryStore, default_history_path};
+use history::{HistoryEntry, HistoryStore, default_history_path};
 use input::Flow;
 use sync::{SyncContext, SyncStatus};
 use terminal::TerminalLauncher;
@@ -553,25 +553,7 @@ fn run_list(args: &ListArgs, config: &Config) -> Result<()> {
             };
             println!("{}", yaml_serde::to_string(&filtered)?);
         }
-        ListFormat::Json => {
-            let filtered: Vec<_> = categories.into_iter().cloned().collect();
-            let mut out = String::from("[");
-            for (i, c) in filtered.iter().enumerate() {
-                if i > 0 {
-                    out.push(',');
-                }
-                write!(out, "{{\"name\":{:?},\"hosts\":[", c.name)?;
-                for (j, h) in c.hosts.iter().enumerate() {
-                    if j > 0 {
-                        out.push(',');
-                    }
-                    write!(out, "{{\"name\":{:?},\"ip\":{:?}}}", h.name, h.ip)?;
-                }
-                out.push_str("]}");
-            }
-            out.push(']');
-            println!("{out}");
-        }
+        ListFormat::Json => println!("{}", list_json(&categories)?),
         ListFormat::Table => {
             let mut writer = io::stdout().lock();
             writeln!(writer, "CATEGORY            HOST                IP")?;
@@ -618,24 +600,7 @@ fn run_history(args: &HistoryArgs, history: &HistoryStore) -> Result<()> {
                 println!("{}/{}\t{}", e.category, e.host_name, e.ip);
             }
         }
-        ListFormat::Json => {
-            let mut out = String::from("[");
-            for (i, e) in entries.iter().enumerate() {
-                if i > 0 {
-                    out.push(',');
-                }
-                write!(
-                    out,
-                    "{{\"host\":{:?},\"ip\":{:?},\"category\":{:?},\"connected_at\":{:?}}}",
-                    e.host_name,
-                    e.ip,
-                    e.category,
-                    e.connected_at_display()
-                )?;
-            }
-            out.push(']');
-            println!("{out}");
-        }
+        ListFormat::Json => println!("{}", history_json(&entries)?),
         ListFormat::Yaml => {
             let data: Vec<_> = entries
                 .iter()
@@ -652,6 +617,57 @@ fn run_history(args: &HistoryArgs, history: &HistoryStore) -> Result<()> {
         }
     }
     Ok(())
+}
+
+#[derive(Serialize)]
+struct JsonCategory<'a> {
+    name: &'a str,
+    hosts: Vec<JsonHost<'a>>,
+}
+
+#[derive(Serialize)]
+struct JsonHost<'a> {
+    name: &'a str,
+    ip: &'a str,
+}
+
+#[derive(Serialize)]
+struct JsonHistoryEntry<'a> {
+    host: &'a str,
+    ip: &'a str,
+    category: &'a str,
+    connected_at: String,
+}
+
+fn list_json(categories: &[&Category]) -> Result<String> {
+    let rows: Vec<JsonCategory> = categories
+        .iter()
+        .map(|category| JsonCategory {
+            name: &category.name,
+            hosts: category
+                .hosts
+                .iter()
+                .map(|host| JsonHost {
+                    name: &host.name,
+                    ip: &host.ip,
+                })
+                .collect(),
+        })
+        .collect();
+    serde_json::to_string(&rows).context("serialize host list as JSON")
+}
+
+fn history_json(entries: &[&HistoryEntry]) -> Result<String> {
+    let rows: Vec<JsonHistoryEntry> = entries
+        .iter()
+        .map(|entry| JsonHistoryEntry {
+            host: &entry.host_name,
+            ip: &entry.ip,
+            category: &entry.category,
+            connected_at: entry.connected_at_display(),
+        })
+        .collect();
+    serde_json::to_string(&rows).context("serialize history as JSON")
 }
 
 fn truncate(input: &str, max: usize) -> String {
@@ -737,6 +753,63 @@ fn find_host(config: &Config, query: &str) -> Option<Host> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    const AWKWARD: &str = "q\"b\\t\tn\nc\u{7}é\u{1F680}";
+
+    #[test]
+    fn list_json_keeps_layout_and_escapes_awkward_names() {
+        let plain = Category {
+            name: "prod".into(),
+            icon: None,
+            hosts: vec![Host {
+                name: "web-01".into(),
+                ip: "10.0.0.1".into(),
+                ..Host::default()
+            }],
+        };
+        assert_eq!(
+            list_json(&[&plain]).expect("json"),
+            r#"[{"name":"prod","hosts":[{"name":"web-01","ip":"10.0.0.1"}]}]"#
+        );
+
+        let awkward = Category {
+            name: AWKWARD.into(),
+            icon: None,
+            hosts: vec![Host {
+                name: AWKWARD.into(),
+                ip: "10.0.0.2".into(),
+                ..Host::default()
+            }],
+        };
+        let parsed: serde_json::Value =
+            serde_json::from_str(&list_json(&[&awkward]).expect("json")).expect("valid JSON");
+        assert_eq!(parsed[0]["name"], AWKWARD);
+        assert_eq!(parsed[0]["hosts"][0]["name"], AWKWARD);
+    }
+
+    #[test]
+    fn history_json_keeps_layout_and_escapes_awkward_names() {
+        let entry = HistoryEntry {
+            host_name: "web-01".into(),
+            ip: "10.0.0.1".into(),
+            category: "prod".into(),
+            connected_at: 0,
+        };
+        assert_eq!(
+            history_json(&[&entry]).expect("json"),
+            r#"[{"host":"web-01","ip":"10.0.0.1","category":"prod","connected_at":"1970-01-01 00:00"}]"#
+        );
+
+        let awkward = HistoryEntry {
+            host_name: AWKWARD.into(),
+            category: AWKWARD.into(),
+            ..entry
+        };
+        let parsed: serde_json::Value =
+            serde_json::from_str(&history_json(&[&awkward]).expect("json")).expect("valid JSON");
+        assert_eq!(parsed[0]["host"], AWKWARD);
+        assert_eq!(parsed[0]["category"], AWKWARD);
+    }
 
     #[test]
     fn push_summary_does_not_leak_url_credentials() {
