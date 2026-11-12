@@ -323,20 +323,8 @@ pub fn sync_field_is_button(field: usize) -> bool {
 
 impl EditorState {
     pub fn from_config(config: &Config) -> Self {
-        let defaults_inputs = [
-            config.defaults.command.program().to_string(),
-            config.defaults.port.to_string(),
-            config.defaults.user.clone().unwrap_or_default(),
-            config.defaults.terminal_command.clone().unwrap_or_default(),
-        ];
-        let sync = config.sync.clone().unwrap_or_default();
-        let mut sync_inputs: [String; SYNC_INPUT_COUNT] = Default::default();
-        sync_inputs[SYNC_REPO] = sync.repo.unwrap_or_default();
-        sync_inputs[SYNC_BRANCH] = sync.branch.unwrap_or_default();
-        sync_inputs[SYNC_PATH] = sync.path.unwrap_or_default();
-        sync_inputs[SYNC_LOCAL] = sync.local.unwrap_or_default();
-        sync_inputs[SYNC_AUTO_PULL] = sync.auto_pull.map(bool_str).unwrap_or_default();
-        sync_inputs[SYNC_AUTO_PUSH] = sync.auto_push.map(bool_str).unwrap_or_default();
+        let defaults_inputs = defaults_inputs_of(config);
+        let sync_inputs = sync_inputs_of(config);
         Self {
             view: EditorView::Menu,
             menu_index: 0,
@@ -472,6 +460,24 @@ impl EditorState {
             .collect()
     }
 
+    /// Applies the defaults form when its inputs no longer mirror `config`,
+    /// and reports whether it did. An untouched form is left alone: applying
+    /// it would mark the editor dirty and rewrite the command for nothing.
+    pub fn apply_edited_defaults(&mut self, config: &mut Config) -> Result<bool, String> {
+        if self.defaults_inputs == defaults_inputs_of(config) {
+            return Ok(false);
+        }
+        self.apply_defaults(config).map(|()| true)
+    }
+
+    /// Sync-form counterpart of [`Self::apply_edited_defaults`].
+    pub fn apply_edited_sync(&mut self, config: &mut Config) -> Result<bool, String> {
+        if self.sync_inputs == sync_inputs_of(config) {
+            return Ok(false);
+        }
+        self.apply_sync(config).map(|()| true)
+    }
+
     pub fn apply_defaults(&mut self, config: &mut Config) -> Result<(), String> {
         let program = self.defaults_inputs[0].trim();
         if program.is_empty() {
@@ -523,6 +529,27 @@ impl EditorState {
         self.sync_inputs[field] = next.into();
         &self.sync_inputs[field]
     }
+}
+
+fn defaults_inputs_of(config: &Config) -> [String; 4] {
+    [
+        config.defaults.command.program().to_string(),
+        config.defaults.port.to_string(),
+        config.defaults.user.clone().unwrap_or_default(),
+        config.defaults.terminal_command.clone().unwrap_or_default(),
+    ]
+}
+
+fn sync_inputs_of(config: &Config) -> [String; SYNC_INPUT_COUNT] {
+    let sync = config.sync.clone().unwrap_or_default();
+    let mut inputs: [String; SYNC_INPUT_COUNT] = Default::default();
+    inputs[SYNC_REPO] = sync.repo.unwrap_or_default();
+    inputs[SYNC_BRANCH] = sync.branch.unwrap_or_default();
+    inputs[SYNC_PATH] = sync.path.unwrap_or_default();
+    inputs[SYNC_LOCAL] = sync.local.unwrap_or_default();
+    inputs[SYNC_AUTO_PULL] = sync.auto_pull.map(bool_str).unwrap_or_default();
+    inputs[SYNC_AUTO_PUSH] = sync.auto_push.map(bool_str).unwrap_or_default();
+    inputs
 }
 
 fn empty_to_none(input: &str) -> Option<String> {

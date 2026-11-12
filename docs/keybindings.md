@@ -62,7 +62,7 @@ If the editor has unsaved changes when you press `Esc` on the settings menu, hop
 | `/`                  | Filter the current list (Categories / Hosts) by name        |
 | `Ctrl+S`             | Save the config to disk (every editor view). In a form view — add / edit, connection defaults, central repo sync — the form is applied first; if it does not validate, the error is shown and nothing is written. Plain `s` only saves inside the unsaved-changes prompt. |
 | `?` / `F1`           | Toggle the in-app help overlay (list views only)            |
-| `Esc`                | Back to the previous screen                                 |
+| `Esc`                | Back to the previous screen. An add / edit form is abandoned; the connection defaults and central repo sync forms are applied first (see below). |
 
 The letter keys above are plain keys: in the menu, the list views and the confirmation prompts, a letter pressed together with `Ctrl` or `Alt` is ignored (`Ctrl+D` does not delete, `Ctrl+Y` does not confirm). `Ctrl+S` and `Ctrl+C` are the only chords.
 
@@ -90,8 +90,8 @@ Text inputs — the add / edit forms, connection defaults, the sync form, the li
 
 - **Manage categories** — list, add (`a`), rename (`r` / `Enter`), delete (`d` then confirm with `y`).
 - **Manage hosts** — `Tab` / `Shift+Tab` cycle to the next / previous category. Use `↑↓` (or `j`/`k`) to move within the host list. Same `a/r/d` semantics; `d` opens a `y/n` confirmation modal so a stray keypress can't wipe an entry.
-- **Connection defaults** — edit `defaults.command` (program), default port, default user. `Enter` applies the form; `Ctrl+S` applies it and writes the config to disk.
-- **Central repo sync** — edit the `sync.*` block. Tab/↑↓ moves through the six form fields and the three action buttons underneath; `Space` toggles `auto-pull` / `auto-push`; `Enter` either applies the form (text fields), flips the toggle (booleans), or fires the button. `Ctrl+S` applies the form and saves, like the `[Save & push]` button.
+- **Connection defaults** — edit `defaults.command` (program), default port, default user. `Enter` applies the form; `Ctrl+S` applies it and writes the config to disk. `Esc` also applies what you typed before going back to the menu, so it is part of the next save (and of the unsaved-changes prompt); if the form does not validate, the error is shown and you stay in the form.
+- **Central repo sync** — edit the `sync.*` block. Tab/↑↓ moves through the six form fields and the three action buttons underneath; `Space` toggles `auto-pull` / `auto-push`; `Enter` either applies the form (text fields), flips the toggle (booleans), or fires the button. `Ctrl+S` applies the form and saves, like the `[Save & push]` button. `Esc` applies typed text and toggles before going back to the menu, without contacting the repo.
 
 ### Sync editor controls
 
@@ -105,7 +105,7 @@ Text inputs — the add / edit forms, connection defaults, the sync form, the li
 | `[Pull now]`             | Apply the form, then clone or fast-forward pull (no local write)       |
 | `[Save & push]`          | Apply the form, write the local config to disk, push if `auto_push`    |
 | `Ctrl+S`                 | Same as the `[Save & push]` button, from any field                     |
-| `Esc`                    | Back to the settings menu                                              |
+| `Esc`                    | Apply the form if it was edited (no clone, no pull), back to the menu  |
 
 ## Mnemonics
 

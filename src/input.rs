@@ -386,7 +386,10 @@ fn handle_defaults(
     }
     let field_count = editor.defaults_inputs.len();
     match code {
-        KeyCode::Esc => editor.view = EditorView::Menu,
+        KeyCode::Esc => {
+            let applied = editor.apply_edited_defaults(config);
+            leave_settings_form(editor, applied, "Defaults applied · Ctrl+S to save");
+        }
         KeyCode::Tab | KeyCode::Down => {
             editor.defaults_field = (editor.defaults_field + 1) % field_count;
         }
@@ -427,7 +430,10 @@ fn handle_sync(
     let is_text_field =
         !sync_field_is_bool(editor.sync_field) && !sync_field_is_button(editor.sync_field);
     match code {
-        KeyCode::Esc => editor.view = EditorView::Menu,
+        KeyCode::Esc => {
+            let applied = editor.apply_edited_sync(config);
+            leave_settings_form(editor, applied, "Sync applied · Ctrl+S to save");
+        }
         KeyCode::Tab | KeyCode::Down => {
             editor.sync_field = (editor.sync_field + 1) % SYNC_ELEMENT_COUNT;
         }
@@ -445,6 +451,22 @@ fn handle_sync(
         },
     }
     Action::None
+}
+
+/// Esc out of the defaults or sync view. Their inputs outlive the view, so
+/// text typed there is applied on the way out: otherwise the menu would save
+/// a config that silently lacks what the form still shows. A form that does
+/// not validate keeps the view open with its error.
+fn leave_settings_form(editor: &mut EditorState, applied: Result<bool, String>, done: &str) {
+    match applied {
+        Ok(changed) => {
+            if changed {
+                editor.flash(done);
+            }
+            editor.view = EditorView::Menu;
+        }
+        Err(err) => editor.flash(err),
+    }
 }
 
 fn activate_sync_field(editor: &mut EditorState, config: &mut Config) -> Action {
@@ -1304,6 +1326,85 @@ mod tests {
         assert_eq!(flash_of(&app), "invalid boolean: maybe");
         assert!(!app.config_path.exists());
         assert!(app.config.sync.is_none());
+    }
+
+    #[test]
+    fn esc_out_of_defaults_applies_the_typed_form() {
+        let dir = TempDir::new().expect("tempdir");
+        let mut app = editing_app(&dir);
+        let state = app.editor.as_mut().expect("editor open");
+        state.view = EditorView::Defaults;
+        state.defaults_field = 1;
+        retype(&mut app, 2, "2200");
+
+        press(&mut app, KeyCode::Esc);
+        assert_eq!(editor(&app).view, EditorView::Menu);
+        assert!(editor(&app).dirty);
+        assert_eq!(flash_of(&app), "Defaults applied · Ctrl+S to save");
+
+        press(&mut app, KeyCode::Esc);
+        assert!(editor(&app).pending_exit);
+        press(&mut app, KeyCode::Char('s'));
+        let on_disk = Config::load_from_path(&app.config_path).expect("saved config");
+        assert_eq!(on_disk.defaults.port, 2200);
+    }
+
+    #[test]
+    fn esc_out_of_an_invalid_defaults_form_stays_and_reports() {
+        let dir = TempDir::new().expect("tempdir");
+        let mut app = editing_app(&dir);
+        let state = app.editor.as_mut().expect("editor open");
+        state.view = EditorView::Defaults;
+        state.defaults_field = 1;
+        retype(&mut app, 2, "ssh");
+
+        press(&mut app, KeyCode::Esc);
+        assert_eq!(editor(&app).view, EditorView::Defaults);
+        assert_eq!(flash_of(&app), "Port must be a number 0-65535");
+        assert!(!editor(&app).dirty);
+        assert_eq!(app.config.defaults.port, 22);
+    }
+
+    #[test]
+    fn esc_out_of_untouched_settings_forms_changes_nothing() {
+        let dir = TempDir::new().expect("tempdir");
+        let mut app = editing_app(&dir);
+        app.config.defaults.command = crate::config::ConnectCommand::Template {
+            program: "mosh".into(),
+            args: vec!["{host}".into()],
+        };
+        let before = app.config.defaults.command.clone();
+        app.enter_edit_mode();
+        for view in [EditorView::Defaults, EditorView::Sync] {
+            app.editor.as_mut().expect("editor open").view = view;
+            press(&mut app, KeyCode::Esc);
+            let state = editor(&app);
+            assert_eq!(state.view, EditorView::Menu, "{view:?}");
+            assert!(!state.dirty, "{view:?}");
+            assert!(state.flash.is_none(), "{view:?}");
+        }
+        assert_eq!(app.config.defaults.command, before);
+        assert!(app.config.sync.is_none());
+    }
+
+    #[test]
+    fn esc_out_of_sync_applies_typed_text_and_toggles() {
+        let dir = TempDir::new().expect("tempdir");
+        let mut app = editing_app(&dir);
+        open_sync_form(&mut app, &dir, SYNC_BRANCH);
+        retype(&mut app, 0, "trunk");
+        app.editor.as_mut().expect("editor open").sync_field = SYNC_AUTO_PULL;
+        press(&mut app, KeyCode::Char(' '));
+
+        press(&mut app, KeyCode::Esc);
+        assert_eq!(editor(&app).view, EditorView::Menu);
+        assert_eq!(flash_of(&app), "Sync applied · Ctrl+S to save");
+
+        ctrl_s(&mut app);
+        let on_disk = Config::load_from_path(&app.config_path).expect("saved config");
+        let sync_cfg = on_disk.sync.expect("sync stanza saved");
+        assert_eq!(sync_cfg.branch.as_deref(), Some("trunk"));
+        assert_eq!(sync_cfg.auto_pull, Some(true));
     }
 
     #[test]
