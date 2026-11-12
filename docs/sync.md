@@ -87,10 +87,12 @@ Any additional top-level keys in the file (left over from an older full-config l
 The credential callback tries, in order:
 
 1. The running SSH agent (any key it has loaded).
-2. `~/.ssh/id_ed25519`, `~/.ssh/id_rsa`, `~/.ssh/id_ecdsa` (the first one that exists).
+2. Each private key in `~/.ssh`, one after the other: `id_ed25519`, `id_rsa`, `id_ecdsa`, `id_dsa`, then any other `id_*` file (not `*.pub`) in name order.
 3. `HOPPR_GIT_USER` + `HOPPR_GIT_TOKEN` environment variables (for HTTPS).
 4. The OS git credential helper (`credential.helper` from your global git config).
 5. Default credentials.
+
+Each source is offered once. When the server rejects one (or no agent is running), hoppr moves on to the next; when all of them have been rejected the operation fails with `every available credential was rejected`. Only the sources that fit the transport are used — steps 1–2 for SSH remotes, steps 3–4 for HTTPS.
 
 SSH passphrase-protected keys are only usable via the agent — load them with `ssh-add` first.
 
