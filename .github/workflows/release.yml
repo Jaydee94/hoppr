@@ -93,12 +93,12 @@ jobs:
             asset: hoppr-linux-aarch64.tar.gz
             cross: true
           - target: x86_64-apple-darwin
-            runner: macos-14
+            runner: macos-latest
             asset: hoppr-macos-x86_64.tar.gz
             cross: false
             macos_target: "10.14"
           - target: aarch64-apple-darwin
-            runner: macos-14
+            runner: macos-latest
             asset: hoppr-macos-aarch64.tar.gz
             cross: false
             macos_target: "11.0"
