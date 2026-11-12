@@ -127,8 +127,10 @@ Supported: `bash`, `zsh`, `fish`, `elvish`, `powershell`.
 
 ## Exit codes
 
-| code | meaning                                            |
-| ---- | -------------------------------------------------- |
-| `0`  | success                                            |
-| `1`  | parsing or runtime error (see stderr)              |
-| _N_  | exit code of the spawned remote-shell process      |
+| code | meaning                                                                                  |
+| ---- | ---------------------------------------------------------------------------------------- |
+| `0`  | success — including `--help`, `--version` and a `hoppr connect` whose remote shell ran   |
+| `1`  | runtime error (see stderr): unreadable config, no host matched, sync failure, a program that could not be started |
+| `2`  | usage error (see stderr): unknown flag or subcommand, missing or invalid argument        |
+
+The exit status of the spawned remote-shell process is **not** passed through: `hoppr connect` exits `0` once the program has run, whatever it returned.
