@@ -125,7 +125,7 @@ The sync chip in the footer encodes its state with a glyph **and** a colour, so 
 - A push that would race against a remote update fails. Re-pull and try again.
 - The pull happens **before** the YAML is parsed; a corrupt upstream file will surface as a startup error, not silently override your local state.
 - Writes go via a `*.tmp` sibling + rename, so an interrupted save can't truncate your config.
-- The saved config file is `chmod 0600` on Unix.
+- The saved config file is created with mode `0600` on Unix, so it is never readable by other users, not even while it is being written.
 - Credentials embedded in the repo URL are redacted in error messages and `hoppr sync status` output: an HTTP(S) URL loses its whole `user:token@` part, any other `scheme://` URL (`ssh://`, `git://`, …) keeps the user name and loses only `:password`.
 - `sync.path` values containing `..` segments are rejected — hoppr falls back to `config.yaml`.
 - If `sync.local` exists but isn't a usable git repo (most commonly the half-cloned residue of a failed first run), hoppr wipes the directory and re-clones on the next start — provided it's empty or only contains a broken `.git/`. Directories with unrelated files are left alone and a clear error is surfaced so user data is never clobbered.

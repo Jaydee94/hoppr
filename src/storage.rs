@@ -5,6 +5,7 @@
 use std::{
     ffi::OsString,
     fs,
+    io::{self, Write},
     path::{Path, PathBuf},
 };
 
@@ -55,11 +56,8 @@ where
         yaml_serde::to_string(value).with_context(|| format!("failed to serialize {kind}"))?;
 
     let tmp = staging_path(path, kind);
-    fs::write(&tmp, yaml)
+    write_staged(&tmp, &yaml, access)
         .with_context(|| format!("failed to stage {kind} file: {}", tmp.display()))?;
-    if access == Access::OwnerOnly {
-        restrict_perms(&tmp).ok();
-    }
     fs::rename(&tmp, path)
         .with_context(|| format!("failed to write {kind} file: {}", path.display()))
 }
@@ -74,18 +72,31 @@ fn staging_path(path: &Path, kind: &str) -> PathBuf {
     tmp
 }
 
+/// An owner-only file is created with its final mode, so its contents are
+/// never readable by others, not even between the write and a later chmod.
+fn write_staged(tmp: &Path, yaml: &str, access: Access) -> io::Result<()> {
+    let mut options = fs::OpenOptions::new();
+    options.write(true).create(true).truncate(true);
+    if access == Access::OwnerOnly {
+        // The mode only applies to a newly created file; a staging file
+        // left behind by a crash would keep whatever mode it had.
+        match fs::remove_file(tmp) {
+            Err(err) if err.kind() != io::ErrorKind::NotFound => return Err(err),
+            _ => {}
+        }
+        restrict_to_owner(&mut options);
+    }
+    options.open(tmp)?.write_all(yaml.as_bytes())
+}
+
 #[cfg(unix)]
-fn restrict_perms(path: &Path) -> std::io::Result<()> {
-    use std::os::unix::fs::PermissionsExt;
-    let mut perms = fs::metadata(path)?.permissions();
-    perms.set_mode(0o600);
-    fs::set_permissions(path, perms)
+fn restrict_to_owner(options: &mut fs::OpenOptions) {
+    use std::os::unix::fs::OpenOptionsExt;
+    options.mode(0o600);
 }
 
 #[cfg(not(unix))]
-fn restrict_perms(_path: &Path) -> std::io::Result<()> {
-    Ok(())
-}
+fn restrict_to_owner(_options: &mut fs::OpenOptions) {}
 
 #[cfg(test)]
 mod tests {
@@ -143,6 +154,23 @@ mod tests {
 
         let tmp = TempDir::new().expect("tempdir");
         let path = tmp.path().join("secret.yaml");
+        save_yaml(&path, &vec!["x"], "test", Access::OwnerOnly).expect("save");
+
+        let mode = fs::metadata(&path).expect("metadata").permissions().mode();
+        assert_eq!(mode & 0o777, 0o600);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn owner_only_access_does_not_inherit_a_stale_staging_file_mode() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let tmp = TempDir::new().expect("tempdir");
+        let path = tmp.path().join("secret.yaml");
+        let stale = staging_path(&path, "test");
+        fs::write(&stale, "left over").expect("write stale staging file");
+        fs::set_permissions(&stale, fs::Permissions::from_mode(0o644)).expect("chmod");
+
         save_yaml(&path, &vec!["x"], "test", Access::OwnerOnly).expect("save");
 
         let mode = fs::metadata(&path).expect("metadata").permissions().mode();
