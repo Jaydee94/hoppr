@@ -269,11 +269,12 @@ fn browse_key(app: &mut App, code: KeyCode, modifiers: KeyModifiers) -> BrowseSt
             app.clear_search_focus_hosts();
         }
         KeyCode::Tab => app.toggle_focus(),
-        KeyCode::Char('/') if plain => {
-            // `/` always starts a fresh search: when re-entering from
-            // another focus with a leftover query, wipe it first so
-            // keystrokes don't append to stale text.
-            if !searching && !app.search_query.is_empty() {
+        KeyCode::Char('/') if plain && !searching => {
+            // `/` always starts a fresh search: a leftover query from an
+            // earlier search is wiped so keystrokes don't append to stale
+            // text. Inside the search input it is an ordinary character,
+            // because category and host names may contain it.
+            if !app.search_query.is_empty() {
                 app.clear_search_query();
             }
             app.focus_search();
@@ -1022,6 +1023,9 @@ mod tests {
 
         browse_key(&mut app, KeyCode::Char('/'), none);
         assert_eq!(app.focus, Focus::Search);
+        browse_key(&mut app, KeyCode::Char('/'), none);
+        assert_eq!(app.search_query, "/");
+        browse_key(&mut app, KeyCode::Backspace, none);
         for (letter, modifiers) in [('q', none), ('e', none), ('a', CTRL_ALT), ('q', CTRL_ALT)] {
             let step = browse_key(&mut app, KeyCode::Char(letter), modifiers);
             assert_eq!(step, BrowseStep::Handled);
