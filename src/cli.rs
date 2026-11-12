@@ -3,9 +3,15 @@
 //! `hoppr` (no subcommand) launches the TUI. Subcommands cover headless
 //! workflows: scripted connects, listing, config management and sync.
 
-use std::path::PathBuf;
+use std::{
+    ffi::OsString,
+    path::{Path, PathBuf},
+};
 
-use clap::{Parser, Subcommand, ValueEnum};
+use clap::{
+    CommandFactory, FromArgMatches, Parser, Subcommand, ValueEnum, error::ErrorKind,
+    parser::ValueSource,
+};
 use clap_complete::Shell;
 
 #[derive(Debug, Parser)]
@@ -18,8 +24,16 @@ use clap_complete::Shell;
 )]
 pub struct Cli {
     /// Path to an explicit config file (overrides the default location).
-    #[arg(long, short = 'c', global = true, env = "HOPPR_CONFIG")]
-    pub config: Option<PathBuf>,
+    /// Before the subcommand it can be shortened to `-c <PATH>`.
+    #[arg(long, global = true, env = "HOPPR_CONFIG", value_name = "PATH")]
+    config: Option<PathBuf>,
+
+    // Not global: subcommands are free to give `-c` their own meaning
+    // (`list -c <CATEGORY>`), and clap rejects a short shared between a
+    // global arg and a subcommand arg. Hidden so `--help` shows a single
+    // config entry; the `--config` help text mentions this form.
+    #[arg(short = 'c', value_name = "PATH", hide = true)]
+    config_short: Option<PathBuf>,
 
     /// Skip the central git-repo pull on startup.
     #[arg(long, global = true)]
@@ -148,6 +162,94 @@ pub struct HistoryArgs {
 
 impl Cli {
     pub fn parse_cli() -> Self {
-        Self::parse()
+        Self::try_parse_cli_from(std::env::args_os()).unwrap_or_else(|err| err.exit())
+    }
+
+    /// Parses `args` and rejects `-c` combined with `--config`.
+    ///
+    /// The check is done here rather than with clap's `conflicts_with`
+    /// because clap counts a value taken from `$HOPPR_CONFIG` as present,
+    /// which would turn `-c <PATH>` into an error whenever the variable is
+    /// exported instead of letting the flag override it.
+    pub fn try_parse_cli_from<I, T>(args: I) -> Result<Self, clap::Error>
+    where
+        I: IntoIterator<Item = T>,
+        T: Into<OsString> + Clone,
+    {
+        let mut command = Self::command();
+        let matches = command.try_get_matches_from_mut(args)?;
+        let cli = Self::from_arg_matches(&matches).map_err(|err| err.format(&mut command))?;
+        let long_on_command_line = matches.value_source("config") == Some(ValueSource::CommandLine);
+        if cli.config_short.is_some() && long_on_command_line {
+            return Err(command.error(
+                ErrorKind::ArgumentConflict,
+                "the argument '-c <PATH>' cannot be used with '--config <PATH>'",
+            ));
+        }
+        Ok(cli)
+    }
+
+    /// The explicit config path, whichever spelling supplied it: `-c` before
+    /// the subcommand, `--config` anywhere, or `$HOPPR_CONFIG`.
+    pub fn config_path(&self) -> Option<&Path> {
+        self.config_short.as_deref().or(self.config.as_deref())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn parse(args: &[&str]) -> Cli {
+        Cli::try_parse_cli_from(args).expect("arguments parse")
+    }
+
+    fn list_category(cli: &Cli) -> Option<&str> {
+        match cli.command.as_ref() {
+            Some(Command::List(args)) => args.category.as_deref(),
+            _ => None,
+        }
+    }
+
+    #[test]
+    fn command_definition_passes_clap_debug_asserts() {
+        Cli::command().debug_assert();
+    }
+
+    #[test]
+    fn short_config_flag_is_accepted_before_the_subcommand() {
+        let cli = parse(&["hoppr", "-c", "p"]);
+        assert_eq!(cli.config_path(), Some(Path::new("p")));
+    }
+
+    #[test]
+    fn long_config_flag_is_accepted() {
+        let cli = parse(&["hoppr", "--config", "p"]);
+        assert_eq!(cli.config_path(), Some(Path::new("p")));
+    }
+
+    #[test]
+    fn short_c_means_config_before_list_and_category_after() {
+        let cli = parse(&["hoppr", "-c", "p", "list", "-c", "prod"]);
+        assert_eq!(cli.config_path(), Some(Path::new("p")));
+        assert_eq!(list_category(&cli), Some("prod"));
+    }
+
+    #[test]
+    fn long_config_flag_is_global_after_the_subcommand() {
+        let cli = parse(&["hoppr", "list", "--config", "p", "-c", "prod"]);
+        assert_eq!(cli.config_path(), Some(Path::new("p")));
+        assert_eq!(list_category(&cli), Some("prod"));
+    }
+
+    #[test]
+    fn short_and_long_config_flags_conflict() {
+        for args in [
+            ["hoppr", "-c", "a", "--config", "b", "list"],
+            ["hoppr", "-c", "a", "list", "--config", "b"],
+        ] {
+            let err = Cli::try_parse_cli_from(args).expect_err("both spellings are rejected");
+            assert_eq!(err.kind(), ErrorKind::ArgumentConflict);
+        }
     }
 }

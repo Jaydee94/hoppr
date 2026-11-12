@@ -52,7 +52,9 @@ use terminal::TerminalLauncher;
 fn main() -> Result<()> {
     let mut cli = Cli::parse_cli();
     let command = cli.command.take();
-    let config_path = cli.config.clone().unwrap_or_else(default_config_path);
+    let config_path = cli
+        .config_path()
+        .map_or_else(default_config_path, Path::to_path_buf);
 
     match command {
         Some(CliCommand::Completions { shell }) => {

@@ -16,6 +16,13 @@ If no subcommand is given, `hoppr` launches the TUI.
 | `--no-sync`             |                 | Skip the central-repo pull on this invocation.   |
 | `--sync`                |                 | Force a sync attempt even if disabled in config. |
 
+`--config` is accepted anywhere on the command line. The short form `-c <PATH>` is only valid **before** the subcommand, because subcommands may give `-c` their own meaning (`hoppr list -c` is `--category`); `--help` therefore lists only `--config`. Passing both `-c` and `--config` is an error. Either flag overrides `HOPPR_CONFIG`.
+
+```bash
+hoppr -c ./demo.yaml list -c prod        # config file, then category filter
+hoppr list --config ./demo.yaml -c prod  # same thing
+```
+
 ## Subcommands
 
 ### `hoppr` / `hoppr tui`
