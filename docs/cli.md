@@ -16,6 +16,13 @@ If no subcommand is given, `hoppr` launches the TUI.
 | `--no-sync`             |                 | Skip the central-repo pull on this invocation.   |
 | `--sync`                |                 | Force a sync attempt even if disabled in config. |
 
+`--config` is accepted anywhere on the command line. The short form `-c <PATH>` is only valid **before** the subcommand, because subcommands may give `-c` their own meaning (`hoppr list -c` is `--category`); `--help` therefore lists only `--config`. Passing both `-c` and `--config` is an error. Either flag overrides `HOPPR_CONFIG`.
+
+```bash
+hoppr -c ./demo.yaml list -c prod        # config file, then category filter
+hoppr list --config ./demo.yaml -c prod  # same thing
+```
+
 ## Subcommands
 
 ### `hoppr` / `hoppr tui`
@@ -58,6 +65,8 @@ hoppr list --format json
 | `-c, --category`      | substring                           | _all_    |
 | `-o, --format`        | `table` · `json` · `yaml` · `plain` | `table`  |
 
+`--format yaml` prints the matching categories together with the `defaults` and `sync` stanzas. Like `hoppr config show`, it strips credentials from `sync.repo` (see below).
+
 ### `hoppr config`
 
 | subcommand            | effect                                                    |
@@ -66,6 +75,8 @@ hoppr list --format json
 | `hoppr config show`   | Dump the resolved YAML to stdout.                         |
 | `hoppr config edit`   | Open the file in `$VISUAL` / `$EDITOR`.                   |
 | `hoppr config init`   | Write a starter config. Use `--force` to overwrite.       |
+
+`hoppr config show` (and `hoppr list --format yaml`) is meant for reading, not for restoring a config: credentials embedded in the `sync.repo` URL are stripped, so `https://user:token@host/team/hosts.git` is printed as `https://host/team/hosts.git` and `ssh://git:password@host/team/hosts.git` as `ssh://git@host/team/hosts.git`. The file named by `hoppr config path` is the source of truth — copy that file, not the dump, when you move a config to another machine.
 
 ### `hoppr sync`
 
@@ -79,7 +90,7 @@ See [`docs/sync.md`](sync.md) for the full story.
 
 ### `hoppr history`
 
-Show the connection history (last 50 connections, most recent first).
+Show the connection history (last 50 connections, most recent first). A host has one entry per category + name + IP, moved to the top each time you connect; the same machine listed under two categories keeps an entry for each.
 
 ```bash
 hoppr history
@@ -116,8 +127,11 @@ Supported: `bash`, `zsh`, `fish`, `elvish`, `powershell`.
 
 ## Exit codes
 
-| code | meaning                                            |
-| ---- | -------------------------------------------------- |
-| `0`  | success                                            |
-| `1`  | parsing or runtime error (see stderr)              |
-| _N_  | exit code of the spawned remote-shell process      |
+| code    | meaning                                                                                  |
+| ------- | ---------------------------------------------------------------------------------------- |
+| `0`     | success — including `--help`, `--version` and `hoppr connect --dry-run`                  |
+| `1`     | runtime error (see stderr): unreadable config, no host matched, sync failure, a program that could not be started |
+| `2`     | usage error (see stderr): unknown flag or subcommand, missing or invalid argument        |
+| *other* | `hoppr connect` only: the exit code of the remote-shell program                          |
+
+`hoppr connect` exits with the exit code of the program it ran, so a script can tell a failed connection from a clean one (`ssh` itself returns `255` on a connection error, otherwise the remote command's status). If the program was killed by a signal, the code is `128 + signal` on Unix; if no code is available at all, it is `1`. A `1` or `2` can therefore also come from the program itself. Connecting from inside the TUI never ends hoppr, whatever the program returned.

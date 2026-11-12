@@ -7,13 +7,11 @@
 use ratatui::style::{Color, Modifier, Style};
 
 #[derive(Debug, Clone, Copy)]
-#[allow(dead_code)]
 pub struct Theme {
     pub bg: Color,
     pub surface: Color,
     pub surface_alt: Color,
     pub border: Color,
-    pub border_strong: Color,
     pub text: Color,
     pub text_dim: Color,
     pub text_muted: Color,
@@ -25,7 +23,6 @@ pub struct Theme {
     pub error: Color,
 }
 
-#[allow(dead_code)]
 impl Theme {
     pub const fn midnight() -> Self {
         Self {
@@ -33,7 +30,6 @@ impl Theme {
             surface: Color::Rgb(0x12, 0x13, 0x1a),
             surface_alt: Color::Rgb(0x1a, 0x1c, 0x25),
             border: Color::Rgb(0x25, 0x28, 0x34),
-            border_strong: Color::Rgb(0x3a, 0x3e, 0x4e),
             text: Color::Rgb(0xf1, 0xf3, 0xf9),
             text_dim: Color::Rgb(0x8a, 0x92, 0xa6),
             text_muted: Color::Rgb(0x55, 0x5c, 0x70),
@@ -50,21 +46,62 @@ impl Theme {
         Style::default().fg(self.text).bg(self.bg)
     }
 
-    pub fn surface_style(&self) -> Style {
-        Style::default().fg(self.text).bg(self.surface)
-    }
-
-    pub fn muted(&self) -> Style {
-        Style::default().fg(self.text_dim).bg(self.bg)
-    }
-
-    pub fn dim(&self) -> Style {
-        Style::default().fg(self.text_muted).bg(self.bg)
-    }
-
     pub fn border_style(&self, active: bool) -> Style {
         let color = if active { self.primary } else { self.border };
         Style::default().fg(color).bg(self.bg)
+    }
+
+    /// Bold text in `color`, leaving the background to the widget.
+    pub fn bold(color: Color) -> Style {
+        Style::new().fg(color).add_modifier(Modifier::BOLD)
+    }
+
+    pub fn title(&self) -> Style {
+        Self::bold(self.primary_glow)
+    }
+
+    pub fn key(&self) -> Style {
+        Self::bold(self.accent)
+    }
+
+    pub fn cursor(&self) -> Style {
+        Style::new()
+            .fg(self.accent)
+            .add_modifier(Modifier::SLOW_BLINK)
+    }
+
+    pub fn selectable(&self, selected: bool) -> Style {
+        if selected {
+            Self::bold(self.text)
+        } else {
+            Style::new().fg(self.text_dim)
+        }
+    }
+
+    pub fn panel(&self) -> Style {
+        Style::new().bg(self.surface)
+    }
+
+    pub fn button_fill(&self, active: bool) -> Style {
+        Style::new().bg(if active {
+            self.surface_alt
+        } else {
+            self.surface
+        })
+    }
+
+    pub fn panel_border(&self, color: Color) -> Style {
+        Style::new().fg(color).bg(self.surface)
+    }
+
+    pub fn input_border(&self, active: bool, invalid: bool) -> Color {
+        if invalid {
+            self.error
+        } else if active {
+            self.primary
+        } else {
+            self.border
+        }
     }
 
     pub fn highlight_primary(&self) -> Style {
@@ -84,3 +121,13 @@ impl Theme {
 
 pub const ACTIVE_GLYPH: &str = "▍ ";
 pub const INACTIVE_GLYPH: &str = "  ";
+
+/// Leading marker of a list row: a bar for the selected row, padding of
+/// the same width otherwise.
+pub const fn selection_glyph(selected: bool) -> &'static str {
+    if selected {
+        ACTIVE_GLYPH
+    } else {
+        INACTIVE_GLYPH
+    }
+}

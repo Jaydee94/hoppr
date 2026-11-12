@@ -5,7 +5,7 @@
 | key                  | action                                                      |
 | -------------------- | ----------------------------------------------------------- |
 | `Tab`                | Toggle focus between Categories ↔ Hosts                     |
-| `/`                  | Focus the search input (always starts a fresh query)        |
+| `/`                  | Focus the search input (always starts a fresh query). Inside the search input it types a `/`, so names containing one can be searched. |
 | `Esc`                | When in search: clear focus back to Hosts. Else: quit.      |
 | `q`                  | Quit                                                        |
 | `Ctrl+C`             | Quit (from any mode)                                        |
@@ -20,6 +20,8 @@
 | `Ctrl+U`             | When in Search: clear the query (stays in search focus)     |
 | `?` / `F1`           | Toggle the in-app help overlay (Esc / `q` also closes it)   |
 
+The letter keys, `/` and `?` are plain keys: pressed together with `Ctrl` or `Alt` they do nothing (`Ctrl+E` does not open the settings, `Alt+Q` does not quit). The chords are `Ctrl+C`, `Ctrl+A` and `Ctrl+U`. `Ctrl+Alt` together is how `AltGr` is reported on Windows and Linux, so such a key press counts as the character it types, not as a `Ctrl` chord.
+
 ### Virtual categories
 
 Two virtual categories appear at the top of the category list when they have content:
@@ -28,6 +30,10 @@ Two virtual categories appear at the top of the category list when they have con
 - **★ Starred** — hosts you marked with `f`. Select a host and press `f` again to unstar.
 
 Both virtual categories support the normal search query and vim navigation.
+
+Stars and history entries are stored by category and host name (history also by IP). When you rename a category, rename a host or change its IP in the settings editor, they follow along as soon as the change is saved; discarding the edit leaves them untouched. Renames made by editing the YAML by hand or arriving through a sync pull are not tracked.
+
+Category and host names may contain `/`. A star is tied to exactly one category + host pair, so `eu/west` › `db` and `eu` › `west/db` are starred independently. A favorites file written by an older version, which stored such a star as the single string `eu/west/db`, is matched against the configured hosts on startup and again after a sync pull from the settings editor.
 
 ### Search behavior
 
@@ -56,9 +62,13 @@ If the editor has unsaved changes when you press `Esc` on the settings menu, hop
 | `d`                  | Request deletion of the selected item (prompts `y/n`)       |
 | `y` / `n`            | Confirm / cancel a pending delete prompt                    |
 | `/`                  | Filter the current list (Categories / Hosts) by name        |
-| `Ctrl+S`             | Save the config to disk (universal across all editor views) |
+| `Ctrl+S`             | Save the config to disk (every editor view). In a form view — add / edit, connection defaults, central repo sync — the form is applied first; if it does not validate, the error is shown and nothing is written. Plain `s` only saves inside the unsaved-changes prompt. |
 | `?` / `F1`           | Toggle the in-app help overlay (list views only)            |
-| `Esc`                | Back to the previous screen                                 |
+| `Esc`                | Back to the previous screen. An add / edit form is abandoned; the connection defaults and central repo sync forms are applied first (see below). |
+
+The letter keys above are plain keys: in the menu, the list views and the confirmation prompts, a letter pressed together with `Ctrl` or `Alt` is ignored (`Ctrl+D` does not delete, `Ctrl+Y` does not confirm). `Ctrl+S` and `Ctrl+C` are the only chords; `Ctrl+Alt+S` (`AltGr+S`) does not save.
+
+Text inputs — the add / edit forms, connection defaults, the sync form, the list filters and the browse-mode search — likewise ignore a key pressed with `Ctrl` or `Alt` instead of typing its letter. `Ctrl+Alt` together is the exception: that is how `AltGr` is reported on Windows and Linux, so characters such as `@`, `{` or `\` typed through it are inserted as usual.
 
 ### Filter input (Categories / Hosts)
 
@@ -82,8 +92,8 @@ If the editor has unsaved changes when you press `Esc` on the settings menu, hop
 
 - **Manage categories** — list, add (`a`), rename (`r` / `Enter`), delete (`d` then confirm with `y`).
 - **Manage hosts** — `Tab` / `Shift+Tab` cycle to the next / previous category. Use `↑↓` (or `j`/`k`) to move within the host list. Same `a/r/d` semantics; `d` opens a `y/n` confirmation modal so a stray keypress can't wipe an entry.
-- **Connection defaults** — edit `defaults.command` (program), default port, default user.
-- **Central repo sync** — edit the `sync.*` block. Tab/↑↓ moves through the six form fields and the three action buttons underneath; `Space` toggles `auto-pull` / `auto-push`; `Enter` either applies the form (text fields), flips the toggle (booleans), or fires the button. `Ctrl+S` is a universal save shortcut.
+- **Connection defaults** — edit `defaults.command` (program), default port, default user. A `defaults.command` template keeps its `args` as long as the program name is unchanged; entering a different program replaces the template with the shorthand form. `Enter` applies the form; `Ctrl+S` applies it and writes the config to disk. `Esc` also applies what you typed before going back to the menu, so it is part of the next save (and of the unsaved-changes prompt); if the form does not validate, the error is shown and you stay in the form.
+- **Central repo sync** — edit the `sync.*` block. Tab/↑↓ moves through the six form fields and the three action buttons underneath; `Space` toggles `auto-pull` / `auto-push`; `Enter` either applies the form (text fields), flips the toggle (booleans), or fires the button. `Ctrl+S` applies the form and saves, like the `[Save & push]` button. `Esc` applies typed text and toggles before going back to the menu, without contacting the repo.
 
 ### Sync editor controls
 
@@ -96,12 +106,12 @@ If the editor has unsaved changes when you press `Esc` on the settings menu, hop
 | `[Test]`                 | Read-only probe — `ls-remote` against the URL currently in the form    |
 | `[Pull now]`             | Apply the form, then clone or fast-forward pull (no local write)       |
 | `[Save & push]`          | Apply the form, write the local config to disk, push if `auto_push`    |
-| `Ctrl+S`                 | Same as the `[Save & push]` button — universal save shortcut           |
-| `Esc`                    | Back to the settings menu                                              |
+| `Ctrl+S`                 | Same as the `[Save & push]` button, from any field                     |
+| `Esc`                    | Apply the form if it was edited (no clone, no pull), back to the menu  |
 
 ## Mnemonics
 
 - `e` for **edit** — opens settings.
-- `Ctrl+S` for **save** — flush to disk (works in every editor view).
+- `Ctrl+S` for **save** — flush to disk (works in every editor view; an open form is applied first).
 - `r` for **rename / replace** — also acts as "edit selected".
 - `/` from many TUIs you've used before.

@@ -26,7 +26,7 @@ git clone https://github.com/Jaydee94/hoppr.git
 cd hoppr
 cargo build              # ~90 s cold (vendored libgit2)
 cargo test
-npm install              # optional — installs the commit-msg hook
+npm install              # optional — installs commitlint (`npx commitlint --from=origin/main`)
 ```
 
 ## Before opening a PR

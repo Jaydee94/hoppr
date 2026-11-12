@@ -5,7 +5,7 @@ Guidance for Claude Code when working on this repository.
 ## Project
 
 `hoppr` is a Rust TUI launcher for SSH and other remote shells.
-Stack: **Rust 2021**, **ratatui 0.29**, **crossterm**, **clap 4**, **git2** (vendored libgit2 + libssh2 + OpenSSL — both HTTPS and SSH repo URLs work without a system `git`/`ssh`), **serde_yaml**.
+Stack: **Rust 2024** (MSRV 1.88), **ratatui 0.30**, **crossterm**, **clap 4**, **git2** (vendored libgit2 + libssh2 + OpenSSL — both HTTPS and SSH repo URLs work without a system `git`/`ssh`), **yaml_serde**.
 
 The binary is a single crate. There is no library target.
 
@@ -13,11 +13,16 @@ The binary is a single crate. There is no library target.
 
 ```
 src/
-  main.rs        entry point + CLI dispatch + TUI event loop
+  main.rs        entry point + CLI dispatch + TUI event loop (browse-mode keys)
+  input.rs       key handling for the settings editor (per-view handlers, save + sync actions)
   cli.rs         clap argument and subcommand definitions
-  config.rs      YAML schema (Config, Defaults, SyncConfig, Category, Host)
+  config.rs      YAML schema (Config, Defaults, SyncConfig, Category, Host, Inventory)
+  storage.rs     shared YAML file persistence (tolerant load, atomic write-then-rename save)
   connect.rs     builds the std::process::Command that launches the remote shell
+  terminal.rs    detects a terminal emulator and opens a connection in a new window
   sync.rs        git2-backed central-repo clone / fast-forward / commit-and-push
+  history.rs     persisted list of recent connections
+  favorites.rs   persisted set of starred hosts
   app.rs         TUI application state (focus, search, selection, editor handle)
   editor.rs      modal in-TUI settings editor (forms, validation)
   ui.rs          ratatui render functions, layout, popups
@@ -77,7 +82,7 @@ All commits, code comments, docs, error messages and PR descriptions are written
 
 - `anyhow::Result` at boundaries (CLI entry points, sync operations).
 - `Context::context` is mandatory when surfacing a filesystem or git operation — the user needs to see *which path* / *which remote* failed.
-- Inside library-style modules (`connect.rs`, `config.rs`), prefer specific `thiserror` enums only when callers need to match — otherwise `anyhow` is fine since this is a binary crate.
+- Inside library-style modules (`connect.rs`, `config.rs`), prefer a specific error enum only when callers need to match — otherwise `anyhow` is fine since this is a binary crate. (`thiserror` is not a dependency; add it only together with the first such enum.)
 
 ### TUI
 
@@ -111,14 +116,14 @@ Never push to a release branch directly — open a PR, get it merged into `main`
 
 ## Common pitfalls
 
-- `Config::save` is not atomic — fine for a hand-edited launcher, but don't rely on it inside `sync.rs` mid-pull.
+- Every on-disk store (config, inventory, history, favorites) is saved through `storage::save_yaml`, which stages a sibling `.tmp` file and renames it over the target. A save is atomic per file, but nothing coordinates it with a concurrent pull — don't write the tracked file from `sync.rs` mid-pull.
 - `git2` credential callbacks try, in order: SSH agent, `~/.ssh/id_*`, `$HOPPR_GIT_USER`/`$HOPPR_GIT_TOKEN`, then the OS git credential helper. Tests that touch sync must not depend on real credentials.
-- `serde_yaml` does not preserve comments. The central-repo workflow assumes the source-of-truth is the YAML graph, not its formatting.
+- `yaml_serde` does not preserve comments. The central-repo workflow assumes the source-of-truth is the YAML graph, not its formatting.
 
 ## Files Claude should treat as guardrails
 
 - `commitlint.config.cjs` — commit message rules
-- `rust-toolchain.toml` — pinned toolchain
+- `rust-toolchain.toml` — toolchain channel (`stable`) and components
 - `.github/workflows/*.yml` — CI + release surface
 
 Modifying these files requires the matching update to `docs/development.md`.

@@ -8,7 +8,7 @@ use std::{
 use ratatui::widgets::ListState;
 
 use crate::{
-    config::{Category, Config, Host},
+    config::{Category, Config, Host, Inventory},
     editor::EditorState,
     favorites::FavoritesStore,
     history::HistoryStore,
@@ -37,7 +37,6 @@ pub enum Mode {
 pub enum MessageKind {
     Success,
     Info,
-    Warn,
     Error,
 }
 
@@ -46,7 +45,6 @@ impl MessageKind {
         match self {
             Self::Success => "✓",
             Self::Info => "·",
-            Self::Warn => "⚠",
             Self::Error => "✕",
         }
     }
@@ -54,7 +52,6 @@ impl MessageKind {
     pub fn ttl(self) -> Duration {
         match self {
             Self::Success | Self::Info => Duration::from_secs(3),
-            Self::Warn => Duration::from_secs(6),
             Self::Error => Duration::from_secs(10),
         }
     }
@@ -169,15 +166,24 @@ pub struct App {
     pub show_help: bool,
 }
 
+fn adopt_legacy_favorites(favorites: &mut FavoritesStore, config: &Config) {
+    favorites.adopt_legacy_keys(|category, host| {
+        config.categories.iter().any(|candidate| {
+            candidate.name == category && candidate.hosts.iter().any(|h| h.name == host)
+        })
+    });
+}
+
 impl App {
     pub fn new(
         config: Config,
         config_path: PathBuf,
         sync_status: SyncStatus,
         history: HistoryStore,
-        favorites: FavoritesStore,
+        mut favorites: FavoritesStore,
         terminal: TerminalLauncher,
     ) -> Self {
+        adopt_legacy_favorites(&mut favorites, &config);
         let mut categories_state = ListState::default();
         let virt_count: usize =
             usize::from(!history.is_empty()) + usize::from(!favorites.is_empty());
@@ -365,14 +371,6 @@ impl App {
         result
     }
 
-    #[allow(dead_code)]
-    pub fn selected_host(&self) -> Option<&Host> {
-        let hosts = self.filtered_hosts();
-        self.hosts_state
-            .selected()
-            .and_then(|idx| hosts.get(idx).map(|fh| fh.host))
-    }
-
     /// Returns the selected host together with its category name. Needed to
     /// record history and toggle favorites without a second scan.
     pub fn selected_host_with_category(&self) -> Option<(&Host, &str)> {
@@ -530,6 +528,14 @@ impl App {
         self.show_help = !self.show_help;
     }
 
+    /// Replace the categories with a pulled inventory. Legacy favorite keys
+    /// are matched again, since the pull may have brought the host one of
+    /// them was waiting for.
+    pub fn apply_inventory(&mut self, inventory: Inventory) {
+        self.config.apply_inventory(inventory);
+        adopt_legacy_favorites(&mut self.favorites, &self.config);
+    }
+
     pub fn enter_edit_mode(&mut self) {
         self.editor = Some(EditorState::from_config(&self.config));
         self.mode = Mode::Edit;
@@ -547,11 +553,6 @@ impl App {
 
     pub fn set_status_success<S: Into<String>>(&mut self, msg: S) {
         self.set_status_kind(MessageKind::Success, msg);
-    }
-
-    #[allow(dead_code)]
-    pub fn set_status_warn<S: Into<String>>(&mut self, msg: S) {
-        self.set_status_kind(MessageKind::Warn, msg);
     }
 
     pub fn set_status_error<S: Into<String>>(&mut self, msg: S) {
@@ -587,7 +588,7 @@ mod tests {
     use std::path::PathBuf;
 
     use crate::{
-        config::{Category, Config, Host},
+        config::{Category, Config, Defaults, Host, Inventory},
         favorites::FavoritesStore,
         history::HistoryStore,
         sync::SyncStatus,
@@ -596,9 +597,70 @@ mod tests {
 
     use super::App;
 
+    #[test]
+    fn a_pulled_inventory_matches_legacy_star_keys_again() {
+        let dir = tempfile::TempDir::new().expect("tempdir");
+        let favorites_path = dir.path().join("favorites.yaml");
+        std::fs::write(&favorites_path, "favorites:\n- eu/west/db\n").expect("write");
+        let mut app = App::new(
+            Config::default(),
+            dir.path().join("config.yaml"),
+            SyncStatus::Disabled,
+            HistoryStore::load(&dir.path().join("history.yaml")),
+            FavoritesStore::load(&favorites_path),
+            TerminalLauncher::detect(None),
+        );
+        assert!(!app.favorites.is_favorite("eu/west", "db"));
+
+        app.apply_inventory(Inventory {
+            categories: vec![Category {
+                name: "eu/west".into(),
+                icon: None,
+                hosts: vec![Host {
+                    name: "db".into(),
+                    ip: "10.0.0.1".into(),
+                    ..Host::default()
+                }],
+            }],
+        });
+        assert_eq!(app.config.categories.len(), 1);
+        assert!(app.favorites.is_favorite("eu/west", "db"));
+    }
+
+    #[test]
+    fn startup_matches_legacy_star_keys_against_the_config() {
+        let dir = tempfile::TempDir::new().expect("tempdir");
+        let favorites_path = dir.path().join("favorites.yaml");
+        std::fs::write(&favorites_path, "favorites:\n- eu/west/db\n").expect("write");
+        let category = |name: &str, host: &str| Category {
+            name: name.into(),
+            icon: None,
+            hosts: vec![Host {
+                name: host.into(),
+                ip: "10.0.0.1".into(),
+                ..Host::default()
+            }],
+        };
+        let config = Config {
+            categories: vec![category("eu/west", "db"), category("eu", "west")],
+            ..Config::default()
+        };
+        let app = App::new(
+            config,
+            dir.path().join("config.yaml"),
+            SyncStatus::Disabled,
+            HistoryStore::load(&dir.path().join("history.yaml")),
+            FavoritesStore::load(&favorites_path),
+            TerminalLauncher::detect(None),
+        );
+        assert!(app.favorites.is_favorite("eu/west", "db"));
+        assert!(!app.favorites.is_favorite("eu", "west"));
+        assert!(!app.favorites.is_empty());
+    }
+
     fn fixture() -> App {
         let config = Config {
-            defaults: Default::default(),
+            defaults: Defaults::default(),
             sync: None,
             categories: vec![Category {
                 name: "infra".into(),
@@ -646,7 +708,7 @@ mod tests {
     #[test]
     fn multi_term_and_matches_across_fields() {
         let config = Config {
-            defaults: Default::default(),
+            defaults: Defaults::default(),
             sync: None,
             categories: vec![Category {
                 name: "entw".into(),
@@ -718,7 +780,7 @@ mod tests {
     #[test]
     fn global_search_finds_across_categories() {
         let config = Config {
-            defaults: Default::default(),
+            defaults: Defaults::default(),
             sync: None,
             categories: vec![
                 Category {
@@ -796,7 +858,7 @@ mod tests {
     #[test]
     fn append_search_char_preserves_selection_when_match_still_visible() {
         let config = Config {
-            defaults: Default::default(),
+            defaults: Defaults::default(),
             sync: None,
             categories: vec![Category {
                 name: "infra".into(),
@@ -859,7 +921,7 @@ mod tests {
         favs.toggle("infra", "gateway");
 
         let config = Config {
-            defaults: Default::default(),
+            defaults: Defaults::default(),
             sync: None,
             categories: vec![Category {
                 name: "infra".into(),

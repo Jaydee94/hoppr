@@ -18,13 +18,12 @@ use std::{
     rc::Rc,
 };
 
-use anyhow::{anyhow, Context, Result};
+use anyhow::{Context, Result, anyhow};
 use git2::{
-    AnnotatedCommit, BranchType, Cred, FetchOptions, ObjectType, PushOptions, RemoteCallbacks,
-    Repository, Signature,
+    AnnotatedCommit, Cred, FetchOptions, PushOptions, RemoteCallbacks, Repository, Signature,
 };
 
-use crate::config::{default_sync_local, SyncConfig};
+use crate::config::{SyncConfig, default_sync_local};
 
 #[derive(Debug, Clone)]
 pub struct SyncContext {
@@ -33,8 +32,6 @@ pub struct SyncContext {
     pub file_in_repo: String,
     pub local_clone: PathBuf,
     pub auto_pull: bool,
-    #[allow(dead_code)]
-    pub auto_push: bool,
 }
 
 impl SyncContext {
@@ -52,10 +49,8 @@ impl SyncContext {
             local_clone: sync
                 .local
                 .as_deref()
-                .map(expand_path)
-                .unwrap_or_else(default_sync_local),
+                .map_or_else(default_sync_local, expand_path),
             auto_pull: sync.auto_pull.unwrap_or(true),
-            auto_push: sync.auto_push.unwrap_or(false),
         })
     }
 
@@ -76,24 +71,39 @@ fn contains_parent_traversal(path: &str) -> bool {
         .any(|c| matches!(c, std::path::Component::ParentDir))
 }
 
-/// Strip `user:password@` (and `user@`) prefixes from an http(s) URL so secrets
-/// aren't echoed in error messages. SSH URLs (`git@host:...`) are left intact
-/// — the `git` username is conventional and there's no embedded secret.
-fn redact_url(url: &str) -> String {
-    if let Some(rest) = url
-        .strip_prefix("https://")
-        .or_else(|| url.strip_prefix("http://"))
-    {
-        let scheme = if url.starts_with("https://") {
-            "https://"
-        } else {
-            "http://"
-        };
-        if let Some(idx) = rest.find('@') {
-            return format!("{scheme}{}", &rest[idx + 1..]);
-        }
+/// Strip embedded credentials from a `scheme://` URL so secrets aren't
+/// echoed in error messages. For http(s) the whole userinfo goes, because a
+/// lone `token@` is itself the secret. For every other scheme (`ssh://`,
+/// `git://`, …) only `:password` is dropped: the user name selects the
+/// account and is not a secret. scp-style `git@host:path` carries no
+/// password and is left intact.
+///
+/// Userinfo only exists inside the authority, which ends at the first `/`,
+/// `?` or `#`; an `@` further along belongs to the path or query.
+pub fn redact_url(url: &str) -> String {
+    let Some((scheme, rest)) = url.split_once("://") else {
+        return url.to_string();
+    };
+    let is_scheme = !scheme.is_empty()
+        && scheme
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '+' | '-' | '.'));
+    if !is_scheme {
+        return url.to_string();
     }
-    url.to_string()
+    let authority_end = rest.find(['/', '?', '#']).unwrap_or(rest.len());
+    let Some(at) = rest[..authority_end].rfind('@') else {
+        return url.to_string();
+    };
+    let after_userinfo = &rest[at + 1..];
+    if scheme.eq_ignore_ascii_case("http") || scheme.eq_ignore_ascii_case("https") {
+        return format!("{scheme}://{after_userinfo}");
+    }
+    match rest[..at].split_once(':') {
+        Some((user, _)) if !user.is_empty() => format!("{scheme}://{user}@{after_userinfo}"),
+        Some(_) => format!("{scheme}://{after_userinfo}"),
+        None => url.to_string(),
+    }
 }
 
 fn expand_path(input: &str) -> PathBuf {
@@ -110,28 +120,101 @@ pub enum SyncStatus {
     Failed,
 }
 
+/// One way of answering libgit2's credential request, in the order they are
+/// tried.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum AuthAttempt {
+    Agent,
+    KeyFile(PathBuf),
+    EnvToken,
+    CredentialHelper,
+    Default,
+}
+
+/// Everything worth offering for `allowed`, most preferred first: SSH agent,
+/// each private key file, the `HOPPR_GIT_*` token, the OS credential helper.
+fn auth_plan(
+    allowed: git2::CredentialType,
+    key_files: &[PathBuf],
+    env_token_set: bool,
+) -> Vec<AuthAttempt> {
+    let mut plan = Vec::new();
+    if allowed.contains(git2::CredentialType::SSH_KEY) {
+        plan.push(AuthAttempt::Agent);
+        plan.extend(key_files.iter().cloned().map(AuthAttempt::KeyFile));
+    }
+    if allowed.contains(git2::CredentialType::USER_PASS_PLAINTEXT) {
+        if env_token_set {
+            plan.push(AuthAttempt::EnvToken);
+        }
+        plan.push(AuthAttempt::CredentialHelper);
+    }
+    if allowed.contains(git2::CredentialType::DEFAULT) {
+        plan.push(AuthAttempt::Default);
+    }
+    plan
+}
+
+/// Walks the [`auth_plan`] across repeated credential requests.
+///
+/// libgit2 calls the credentials callback again each time the server rejects
+/// what it was given, and keeps doing so for as long as it receives something
+/// new. Handing out each attempt at most once is what lets a later source get
+/// its turn after an earlier one fails (no agent running, key not authorised)
+/// and what ends the exchange once the plan is used up.
+#[derive(Debug, Default)]
+struct AuthSequence {
+    offered: Vec<AuthAttempt>,
+}
+
+impl AuthSequence {
+    /// The allowed types can change between requests, so the plan is rebuilt
+    /// each time and matched against what was already offered rather than
+    /// indexed by a counter.
+    fn next(
+        &mut self,
+        allowed: git2::CredentialType,
+        key_files: &[PathBuf],
+        env_token_set: bool,
+    ) -> Option<AuthAttempt> {
+        let attempt = auth_plan(allowed, key_files, env_token_set)
+            .into_iter()
+            .find(|attempt| !self.offered.contains(attempt))?;
+        self.offered.push(attempt.clone());
+        Some(attempt)
+    }
+}
+
 /// Build a fresh set of `RemoteCallbacks` wired to our credentials
 /// helper.
 ///
 /// SSH is a two-round flow: libgit2 first asks for the *username*
 /// (separate from the credential), then for the actual key. USERNAME
 /// requests are idempotent — libgit2 may legitimately ask for it more
-/// than once across a single operation (e.g. test_connection on some
-/// libssh2 builds), so we just keep answering. The *real credential*
-/// round is gated: a second invocation means our creds were rejected
-/// and we bail out instead of spinning forever.
+/// than once across a single operation (e.g. `test_connection` on some
+/// libssh2 builds), so we just keep answering. Every further request
+/// means the previous answer was rejected and moves one step along the
+/// [`AuthSequence`]; when it runs dry we bail out instead of spinning
+/// forever.
 fn make_auth_callbacks() -> RemoteCallbacks<'static> {
     let mut callbacks = RemoteCallbacks::new();
-    let mut answered_credential = false;
+    let mut sequence = AuthSequence::default();
+    let mut key_files: Option<Vec<PathBuf>> = None;
     callbacks.credentials(move |url, user, allowed| {
         if allowed.contains(git2::CredentialType::USERNAME) {
             return Cred::username(user.unwrap_or("git"));
         }
-        if answered_credential {
-            return Err(git2::Error::from_str("credentials already attempted"));
+        let key_files = key_files.get_or_insert_with(default_key_files);
+        while let Some(attempt) = sequence.next(allowed, key_files, env_token().is_some()) {
+            if let Ok(cred) = build_credential(&attempt, url, user) {
+                return Ok(cred);
+            }
         }
-        answered_credential = true;
-        credentials_cb(url, user, allowed)
+        Err(git2::Error::from_str(if sequence.offered.is_empty() {
+            "no suitable credentials available"
+        } else {
+            "every available credential was rejected"
+        }))
     });
     // Explicit passthrough: defer to libgit2's defaults (known_hosts for
     // SSH, system CA roots for HTTPS). Without this, some libgit2 builds
@@ -145,12 +228,12 @@ fn make_auth_callbacks() -> RemoteCallbacks<'static> {
 impl SyncStatus {
     pub fn label(self) -> &'static str {
         match self {
-            SyncStatus::Disabled => "sync off",
-            SyncStatus::UpToDate => "sync ok",
-            SyncStatus::Pulled => "pulled",
-            SyncStatus::PulledWithChanges => "pulled +",
-            SyncStatus::Skipped => "sync skipped",
-            SyncStatus::Failed => "sync error",
+            Self::Disabled => "sync off",
+            Self::UpToDate => "sync ok",
+            Self::Pulled => "pulled",
+            Self::PulledWithChanges => "pulled +",
+            Self::Skipped => "sync skipped",
+            Self::Failed => "sync error",
         }
     }
 }
@@ -281,6 +364,17 @@ fn dir_holds_only_git_traces(path: &Path) -> bool {
 /// "is the local clone usable".
 pub fn local_repo_ready(ctx: &SyncContext) -> bool {
     ctx.local_clone.exists() && Repository::open(&ctx.local_clone).is_ok()
+}
+
+/// Cheap (local-only) probe of the synced clone. Returns `None` when sync
+/// isn't configured or the clone isn't a usable git repo; otherwise the
+/// bool reflects `git status` — true means there are uncommitted changes.
+pub fn probe_dirty(sync: Option<&SyncConfig>) -> Option<bool> {
+    let ctx = SyncContext::from(sync?)?;
+    if !local_repo_ready(&ctx) {
+        return None;
+    }
+    has_uncommitted_changes(&ctx).ok()
 }
 
 /// Fast-forward pull. Returns whether the working copy moved.
@@ -423,70 +517,76 @@ fn make_signature(repo: &Repository) -> Result<Signature<'static>> {
     Signature::now("hoppr", "hoppr@localhost").map_err(Into::into)
 }
 
-/// Try a sequence of credential helpers — SSH agent, default key files,
-/// the OS git config, finally any USERNAME/PASSWORD env vars.
-fn credentials_cb(
+fn env_token() -> Option<(String, String)> {
+    let user = std::env::var("HOPPR_GIT_USER").ok()?;
+    let token = std::env::var("HOPPR_GIT_TOKEN").ok()?;
+    Some((user, token))
+}
+
+/// Constructing an agent or key-file credential never fails for a missing
+/// agent or an unusable key — libgit2 only finds out when it authenticates
+/// with it, and reports that by asking for credentials again.
+fn build_credential(
+    attempt: &AuthAttempt,
     url: &str,
     username: Option<&str>,
-    allowed: git2::CredentialType,
 ) -> Result<Cred, git2::Error> {
-    if allowed.contains(git2::CredentialType::SSH_KEY) {
-        let user = username.unwrap_or("git");
-        // ssh-agent first — handles passphrase-protected keys
-        // transparently. Many setups (corp laptops, ~/.ssh/config with
-        // `AddKeysToAgent yes`) rely on this exclusively.
-        if let Ok(cred) = Cred::ssh_key_from_agent(user) {
-            return Ok(cred);
+    let ssh_user = username.unwrap_or("git");
+    match attempt {
+        AuthAttempt::Agent => Cred::ssh_key_from_agent(ssh_user),
+        AuthAttempt::KeyFile(path) => Cred::ssh_key(ssh_user, None, path, None),
+        AuthAttempt::EnvToken => {
+            let (user, token) = env_token()
+                .ok_or_else(|| git2::Error::from_str("HOPPR_GIT_USER/HOPPR_GIT_TOKEN unset"))?;
+            Cred::userpass_plaintext(&user, &token)
         }
-        // Then walk ~/.ssh for private keys. Standard filenames first
-        // (so we don't pick a less-likely candidate), then any other
-        // `id_*` file — covers custom-named keys like `id_work`.
-        if let Some(home) = directories::UserDirs::new() {
-            let ssh_dir = home.home_dir().join(".ssh");
-            for name in ["id_ed25519", "id_rsa", "id_ecdsa", "id_dsa"] {
-                let key = ssh_dir.join(name);
-                if key.exists() {
-                    if let Ok(cred) = Cred::ssh_key(user, None, &key, None) {
-                        return Ok(cred);
-                    }
-                }
-            }
-            if let Ok(entries) = std::fs::read_dir(&ssh_dir) {
-                for entry in entries.flatten() {
-                    let path = entry.path();
-                    let Some(name) = path.file_name().and_then(|n| n.to_str()) else {
-                        continue;
-                    };
-                    if !name.starts_with("id_") || name.ends_with(".pub") {
-                        continue;
-                    }
-                    if let Ok(cred) = Cred::ssh_key(user, None, &path, None) {
-                        return Ok(cred);
-                    }
-                }
-            }
+        AuthAttempt::CredentialHelper => {
+            let config = git2::Config::open_default()?;
+            Cred::credential_helper(&config, url, username)
         }
+        AuthAttempt::Default => Cred::default(),
     }
+}
 
-    if allowed.contains(git2::CredentialType::USER_PASS_PLAINTEXT) {
-        if let (Ok(user), Ok(pass)) = (
-            std::env::var("HOPPR_GIT_USER"),
-            std::env::var("HOPPR_GIT_TOKEN"),
-        ) {
-            return Cred::userpass_plaintext(&user, &pass);
-        }
-        if let Ok(config) = git2::Config::open_default() {
-            if let Ok(helper) = Cred::credential_helper(&config, url, username) {
-                return Ok(helper);
-            }
-        }
-    }
+fn default_key_files() -> Vec<PathBuf> {
+    directories::UserDirs::new()
+        .map(|dirs| private_key_files(&dirs.home_dir().join(".ssh")))
+        .unwrap_or_default()
+}
 
-    if allowed.contains(git2::CredentialType::DEFAULT) {
-        return Cred::default();
-    }
+/// Private keys in `ssh_dir`: the standard filenames first (so a
+/// less-likely candidate is not picked ahead of them), then any other
+/// `id_*` file — covers custom-named keys like `id_work` — in name order.
+fn private_key_files(ssh_dir: &Path) -> Vec<PathBuf> {
+    const STANDARD: [&str; 4] = ["id_ed25519", "id_rsa", "id_ecdsa", "id_dsa"];
+    let mut keys: Vec<PathBuf> = STANDARD
+        .iter()
+        .map(|name| ssh_dir.join(name))
+        .filter(|path| path.is_file())
+        .collect();
+    let mut custom: Vec<PathBuf> = fs::read_dir(ssh_dir)
+        .into_iter()
+        .flatten()
+        .flatten()
+        .map(|entry| entry.path())
+        .filter(|path| path.is_file() && is_private_key_candidate(path) && !keys.contains(path))
+        .collect();
+    custom.sort();
+    keys.extend(custom);
+    keys
+}
 
-    Err(git2::Error::from_str("no suitable credentials available"))
+/// True for `~/.ssh` entries named `id_*` that are not the public half of
+/// a key pair (`.pub`, in any letter case).
+fn is_private_key_candidate(path: &Path) -> bool {
+    let is_id_file = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .is_some_and(|name| name.starts_with("id_"));
+    let is_public_key = path
+        .extension()
+        .is_some_and(|ext| ext.eq_ignore_ascii_case("pub"));
+    is_id_file && !is_public_key
 }
 
 /// Branch convenience helper used by `hoppr sync status`.
@@ -501,34 +601,12 @@ pub fn current_branch(ctx: &SyncContext) -> Result<String> {
     }
 }
 
-/// Returns true when the local clone has uncommitted changes.
 pub fn has_uncommitted_changes(ctx: &SyncContext) -> Result<bool> {
     let repo = Repository::open(&ctx.local_clone)?;
     let statuses = repo.statuses(None)?;
     Ok(statuses
         .iter()
         .any(|s| !s.status().is_ignored() && s.status() != git2::Status::CURRENT))
-}
-
-#[allow(dead_code)]
-pub fn checkout_branch(ctx: &SyncContext) -> Result<()> {
-    let repo = Repository::open(&ctx.local_clone)?;
-    let _ = repo.find_branch(&ctx.branch, BranchType::Local)?;
-    let obj = repo.revparse_single(&format!("refs/heads/{}", ctx.branch))?;
-    repo.checkout_tree(&obj, None)?;
-    repo.set_head(&format!("refs/heads/{}", ctx.branch))?;
-    Ok(())
-}
-
-#[allow(dead_code)]
-fn object_kind_label(kind: Option<ObjectType>) -> &'static str {
-    match kind {
-        Some(ObjectType::Commit) => "commit",
-        Some(ObjectType::Tree) => "tree",
-        Some(ObjectType::Blob) => "blob",
-        Some(ObjectType::Tag) => "tag",
-        _ => "?",
-    }
 }
 
 #[cfg(test)]
@@ -561,6 +639,201 @@ mod tests {
             redact_url("ssh://git@github.com/x"),
             "ssh://git@github.com/x"
         );
+    }
+
+    #[test]
+    fn redacts_passwords_but_keeps_the_user_for_other_schemes() {
+        assert_eq!(
+            redact_url("ssh://git:secret@host.example/team/repo.git"),
+            "ssh://git@host.example/team/repo.git"
+        );
+        assert_eq!(
+            redact_url("ssh://git:secret@host.example:2222/repo@v2.git"),
+            "ssh://git@host.example:2222/repo@v2.git"
+        );
+        assert_eq!(
+            redact_url("git+ssh://deploy:p@ss:word@host.example/x"),
+            "git+ssh://deploy@host.example/x"
+        );
+        assert_eq!(
+            redact_url("git://bob:secret@host.example/x"),
+            "git://bob@host.example/x"
+        );
+        assert_eq!(
+            redact_url("ftp://:secret@host.example/x"),
+            "ftp://host.example/x"
+        );
+        assert_eq!(
+            redact_url("HTTPS://alice:secret@host.example/x"),
+            "HTTPS://host.example/x"
+        );
+    }
+
+    #[test]
+    fn leaves_urls_without_a_password_alone() {
+        assert_eq!(
+            redact_url("ssh://git@host.example:2222/x"),
+            "ssh://git@host.example:2222/x"
+        );
+        assert_eq!(
+            redact_url("ssh://host.example/path:with@signs"),
+            "ssh://host.example/path:with@signs"
+        );
+        assert_eq!(
+            redact_url("git@host.example:team/repo@v2.git"),
+            "git@host.example:team/repo@v2.git"
+        );
+        assert_eq!(redact_url("/srv/git/a://b:c@d"), "/srv/git/a://b:c@d");
+    }
+
+    #[test]
+    fn redaction_ignores_at_signs_outside_the_authority() {
+        assert_eq!(
+            redact_url("https://host.example/path@x"),
+            "https://host.example/path@x"
+        );
+        assert_eq!(
+            redact_url("https://host.example/repo?ref=a@b"),
+            "https://host.example/repo?ref=a@b"
+        );
+        assert_eq!(
+            redact_url("https://host.example?ref=a@b"),
+            "https://host.example?ref=a@b"
+        );
+        assert_eq!(
+            redact_url("http://host.example#frag@x"),
+            "http://host.example#frag@x"
+        );
+        assert_eq!(
+            redact_url("https://alice:secret@host.example/team@org/repo.git"),
+            "https://host.example/team@org/repo.git"
+        );
+    }
+
+    #[test]
+    fn private_key_candidates_are_id_files_without_pub_extension() {
+        assert!(is_private_key_candidate(Path::new("/h/.ssh/id_ed25519")));
+        assert!(is_private_key_candidate(Path::new("/h/.ssh/id_work")));
+        assert!(is_private_key_candidate(Path::new("/h/.ssh/id_work.pem")));
+        assert!(!is_private_key_candidate(Path::new("/h/.ssh/id_work.pub")));
+        assert!(!is_private_key_candidate(Path::new("/h/.ssh/id_work.PUB")));
+        assert!(!is_private_key_candidate(Path::new("/h/.ssh/known_hosts")));
+        assert!(!is_private_key_candidate(Path::new("/h/.ssh/config")));
+    }
+
+    fn drain(
+        sequence: &mut AuthSequence,
+        allowed: git2::CredentialType,
+        keys: &[PathBuf],
+        env_token_set: bool,
+    ) -> Vec<AuthAttempt> {
+        std::iter::from_fn(|| sequence.next(allowed, keys, env_token_set)).collect()
+    }
+
+    #[test]
+    fn ssh_sequence_tries_the_agent_then_every_key_then_stops() {
+        let keys = [
+            PathBuf::from("/h/.ssh/id_ed25519"),
+            "/h/.ssh/id_work".into(),
+        ];
+        let mut sequence = AuthSequence::default();
+        assert_eq!(
+            drain(&mut sequence, git2::CredentialType::SSH_KEY, &keys, true),
+            vec![
+                AuthAttempt::Agent,
+                AuthAttempt::KeyFile(keys[0].clone()),
+                AuthAttempt::KeyFile(keys[1].clone()),
+            ]
+        );
+        assert_eq!(
+            sequence.next(git2::CredentialType::SSH_KEY, &keys, true),
+            None
+        );
+    }
+
+    #[test]
+    fn https_sequence_tries_the_env_token_before_the_helper() {
+        let allowed = git2::CredentialType::USER_PASS_PLAINTEXT;
+        assert_eq!(
+            drain(&mut AuthSequence::default(), allowed, &[], true),
+            vec![AuthAttempt::EnvToken, AuthAttempt::CredentialHelper]
+        );
+        assert_eq!(
+            drain(&mut AuthSequence::default(), allowed, &[], false),
+            vec![AuthAttempt::CredentialHelper]
+        );
+    }
+
+    #[test]
+    fn auth_plan_keeps_the_documented_order_across_types() {
+        let keys = [PathBuf::from("/h/.ssh/id_rsa")];
+        let allowed = git2::CredentialType::SSH_KEY
+            | git2::CredentialType::USER_PASS_PLAINTEXT
+            | git2::CredentialType::DEFAULT;
+        assert_eq!(
+            auth_plan(allowed, &keys, true),
+            vec![
+                AuthAttempt::Agent,
+                AuthAttempt::KeyFile(keys[0].clone()),
+                AuthAttempt::EnvToken,
+                AuthAttempt::CredentialHelper,
+                AuthAttempt::Default,
+            ]
+        );
+    }
+
+    #[test]
+    fn auth_sequence_offers_nothing_for_unsupported_types() {
+        let mut sequence = AuthSequence::default();
+        let keys = [PathBuf::from("/h/.ssh/id_rsa")];
+        assert_eq!(
+            sequence.next(git2::CredentialType::SSH_CUSTOM, &keys, true),
+            None
+        );
+        assert!(sequence.offered.is_empty());
+    }
+
+    #[test]
+    fn auth_sequence_does_not_repeat_when_allowed_types_change() {
+        let keys = [PathBuf::from("/h/.ssh/id_rsa")];
+        let mut sequence = AuthSequence::default();
+        let ssh = git2::CredentialType::SSH_KEY;
+        let both = ssh | git2::CredentialType::USER_PASS_PLAINTEXT;
+        assert_eq!(sequence.next(ssh, &keys, false), Some(AuthAttempt::Agent));
+        assert_eq!(
+            drain(&mut sequence, both, &keys, false),
+            vec![
+                AuthAttempt::KeyFile(keys[0].clone()),
+                AuthAttempt::CredentialHelper
+            ]
+        );
+    }
+
+    #[test]
+    fn private_key_files_lists_standard_names_first_without_duplicates() {
+        let tmp = tempfile::TempDir::new().expect("tempdir");
+        for name in [
+            "id_work",
+            "id_rsa",
+            "id_ed25519",
+            "id_ed25519.pub",
+            "id_alpha",
+            "known_hosts",
+        ] {
+            fs::write(tmp.path().join(name), "x").expect("write");
+        }
+        fs::create_dir(tmp.path().join("id_dir")).expect("mkdir");
+        let names: Vec<String> = private_key_files(tmp.path())
+            .iter()
+            .map(|path| path.file_name().unwrap().to_string_lossy().into_owned())
+            .collect();
+        assert_eq!(names, ["id_ed25519", "id_rsa", "id_alpha", "id_work"]);
+    }
+
+    #[test]
+    fn private_key_files_is_empty_without_an_ssh_dir() {
+        let tmp = tempfile::TempDir::new().expect("tempdir");
+        assert!(private_key_files(&tmp.path().join("missing")).is_empty());
     }
 
     #[test]

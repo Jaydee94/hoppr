@@ -1,7 +1,6 @@
 /target
 /dist
 node_modules
-.husky/_
 
 # editor / OS
 .idea/

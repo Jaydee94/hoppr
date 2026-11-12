@@ -11,7 +11,7 @@
   <a href="https://github.com/Jaydee94/hoppr/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/Jaydee94/hoppr/ci.yml?branch=main&label=ci&style=flat-square" alt="CI"></a>
   <a href="https://github.com/Jaydee94/hoppr/releases"><img src="https://img.shields.io/github/v/release/Jaydee94/hoppr?style=flat-square" alt="release"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-7c5cff?style=flat-square" alt="license"></a>
-  <img src="https://img.shields.io/badge/rust-1.75%2B-orange?style=flat-square" alt="rust">
+  <img src="https://img.shields.io/badge/rust-1.88%2B-orange?style=flat-square" alt="rust">
 </p>
 
 <p align="center">

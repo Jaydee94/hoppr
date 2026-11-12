@@ -18,12 +18,6 @@ pub enum EditorView {
     Sync,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum FormMode {
-    Create,
-    Update,
-}
-
 #[derive(Debug, Default, Clone)]
 pub struct HostForm {
     pub mode_create: bool,
@@ -254,6 +248,23 @@ pub enum PendingDelete {
     },
 }
 
+/// An identity change made in the editor that the name-keyed stores
+/// (favorites, history) have to follow.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Rename {
+    Category {
+        from: String,
+        to: String,
+    },
+    Host {
+        category: String,
+        from_name: String,
+        from_ip: String,
+        to_name: String,
+        to_ip: String,
+    },
+}
+
 #[derive(Debug, Clone)]
 pub struct EditorState {
     pub view: EditorView,
@@ -265,7 +276,8 @@ pub struct EditorState {
     pub defaults_field: usize,
     pub defaults_inputs: [String; 4], // command program, port, user, terminal_command
     pub sync_field: usize,
-    pub sync_inputs: [String; 6], // repo, branch, path, local, auto_pull, auto_push
+    /// Indexed by the `SYNC_*` field constants.
+    pub sync_inputs: [String; SYNC_INPUT_COUNT],
     pub dirty: bool,
     pub flash: Option<String>,
     /// Set when the user pressed Esc on the menu while `dirty` was true.
@@ -273,6 +285,10 @@ pub struct EditorState {
     /// prompt instead of silently writing the config to disk.
     pub pending_exit: bool,
     pub pending_delete: Option<PendingDelete>,
+    /// Renames made since the last save, oldest first. They are replayed
+    /// onto favorites and history only when the config is written, so a
+    /// discarded edit leaves those stores pointing at the names on disk.
+    pub pending_renames: Vec<Rename>,
     pub category_filter: Option<String>,
     pub host_filter: Option<String>,
     pub filter_focus: bool,
@@ -285,14 +301,12 @@ pub struct EditorState {
 /// underneath the form — they don't read from `sync_inputs`, they fire
 /// their action on Enter.
 pub const SYNC_REPO: usize = 0;
-#[allow(dead_code)]
 pub const SYNC_BRANCH: usize = 1;
-#[allow(dead_code)]
 pub const SYNC_PATH: usize = 2;
-#[allow(dead_code)]
 pub const SYNC_LOCAL: usize = 3;
 pub const SYNC_AUTO_PULL: usize = 4;
 pub const SYNC_AUTO_PUSH: usize = 5;
+pub const SYNC_INPUT_COUNT: usize = 6;
 pub const SYNC_BTN_TEST: usize = 6;
 pub const SYNC_BTN_SYNC: usize = 7;
 pub const SYNC_BTN_SAVE: usize = 8;
@@ -309,21 +323,8 @@ pub fn sync_field_is_button(field: usize) -> bool {
 
 impl EditorState {
     pub fn from_config(config: &Config) -> Self {
-        let defaults_inputs = [
-            config.defaults.command.program().to_string(),
-            config.defaults.port.to_string(),
-            config.defaults.user.clone().unwrap_or_default(),
-            config.defaults.terminal_command.clone().unwrap_or_default(),
-        ];
-        let sync = config.sync.clone().unwrap_or_default();
-        let sync_inputs = [
-            sync.repo.unwrap_or_default(),
-            sync.branch.unwrap_or_default(),
-            sync.path.unwrap_or_default(),
-            sync.local.unwrap_or_default(),
-            sync.auto_pull.map(bool_str).unwrap_or_default(),
-            sync.auto_push.map(bool_str).unwrap_or_default(),
-        ];
+        let defaults_inputs = defaults_inputs_of(config);
+        let sync_inputs = sync_inputs_of(config);
         Self {
             view: EditorView::Menu,
             menu_index: 0,
@@ -339,6 +340,7 @@ impl EditorState {
             flash: None,
             pending_exit: false,
             pending_delete: None,
+            pending_renames: Vec::new(),
             category_filter: None,
             host_filter: None,
             filter_focus: false,
@@ -381,12 +383,11 @@ impl EditorState {
                     .categories
                     .iter_mut()
                     .find(|c| c.name == category_name)
+                    && let Some(idx) = cat.hosts.iter().position(|h| h.name == host_name)
                 {
-                    if let Some(idx) = cat.hosts.iter().position(|h| h.name == host_name) {
-                        cat.hosts.remove(idx);
-                        self.dirty = true;
-                        return true;
-                    }
+                    cat.hosts.remove(idx);
+                    self.dirty = true;
+                    return true;
                 }
             }
         }
@@ -459,6 +460,24 @@ impl EditorState {
             .collect()
     }
 
+    /// Applies the defaults form when its inputs no longer mirror `config`,
+    /// and reports whether it did. An untouched form is left alone: applying
+    /// it would mark the editor dirty and rewrite the command for nothing.
+    pub fn apply_edited_defaults(&mut self, config: &mut Config) -> Result<bool, String> {
+        if self.defaults_inputs == defaults_inputs_of(config) {
+            return Ok(false);
+        }
+        self.apply_defaults(config).map(|()| true)
+    }
+
+    /// Sync-form counterpart of [`Self::apply_edited_defaults`].
+    pub fn apply_edited_sync(&mut self, config: &mut Config) -> Result<bool, String> {
+        if self.sync_inputs == sync_inputs_of(config) {
+            return Ok(false);
+        }
+        self.apply_sync(config).map(|()| true)
+    }
+
     pub fn apply_defaults(&mut self, config: &mut Config) -> Result<(), String> {
         let program = self.defaults_inputs[0].trim();
         if program.is_empty() {
@@ -469,7 +488,14 @@ impl EditorState {
             .parse()
             .map_err(|_| "Port must be a number 0-65535".to_string())?;
 
-        config.defaults.command = ConnectCommand::Program(program.into());
+        // The form only edits the program name. A template for the same
+        // program keeps its args; a different program gets the shorthand
+        // form, since the old args were written for another tool.
+        let keeps_template = config.defaults.command.args().is_some()
+            && config.defaults.command.program() == program;
+        if !keeps_template {
+            config.defaults.command = ConnectCommand::Program(program.into());
+        }
         config.defaults.port = port;
         config.defaults.user = empty_to_none(&self.defaults_inputs[2]);
         config.defaults.terminal_command = empty_to_none(&self.defaults_inputs[3]);
@@ -478,7 +504,7 @@ impl EditorState {
     }
 
     pub fn apply_sync(&mut self, config: &mut Config) -> Result<(), String> {
-        let repo = empty_to_none(&self.sync_inputs[0]);
+        let repo = empty_to_none(&self.sync_inputs[SYNC_REPO]);
         if repo.is_none() {
             config.sync = None;
             self.dirty = true;
@@ -486,11 +512,11 @@ impl EditorState {
         }
         let mut sync = config.sync.clone().unwrap_or_default();
         sync.repo = repo;
-        sync.branch = empty_to_none(&self.sync_inputs[1]);
-        sync.path = empty_to_none(&self.sync_inputs[2]);
-        sync.local = empty_to_none(&self.sync_inputs[3]);
-        sync.auto_pull = parse_bool(&self.sync_inputs[4])?;
-        sync.auto_push = parse_bool(&self.sync_inputs[5])?;
+        sync.branch = empty_to_none(&self.sync_inputs[SYNC_BRANCH]);
+        sync.path = empty_to_none(&self.sync_inputs[SYNC_PATH]);
+        sync.local = empty_to_none(&self.sync_inputs[SYNC_LOCAL]);
+        sync.auto_pull = parse_bool(&self.sync_inputs[SYNC_AUTO_PULL])?;
+        sync.auto_push = parse_bool(&self.sync_inputs[SYNC_AUTO_PUSH])?;
         config.sync = Some(sync);
         self.dirty = true;
         Ok(())
@@ -510,6 +536,27 @@ impl EditorState {
         self.sync_inputs[field] = next.into();
         &self.sync_inputs[field]
     }
+}
+
+fn defaults_inputs_of(config: &Config) -> [String; 4] {
+    [
+        config.defaults.command.program().to_string(),
+        config.defaults.port.to_string(),
+        config.defaults.user.clone().unwrap_or_default(),
+        config.defaults.terminal_command.clone().unwrap_or_default(),
+    ]
+}
+
+fn sync_inputs_of(config: &Config) -> [String; SYNC_INPUT_COUNT] {
+    let sync = config.sync.clone().unwrap_or_default();
+    let mut inputs: [String; SYNC_INPUT_COUNT] = Default::default();
+    inputs[SYNC_REPO] = sync.repo.unwrap_or_default();
+    inputs[SYNC_BRANCH] = sync.branch.unwrap_or_default();
+    inputs[SYNC_PATH] = sync.path.unwrap_or_default();
+    inputs[SYNC_LOCAL] = sync.local.unwrap_or_default();
+    inputs[SYNC_AUTO_PULL] = sync.auto_pull.map(bool_str).unwrap_or_default();
+    inputs[SYNC_AUTO_PUSH] = sync.auto_push.map(bool_str).unwrap_or_default();
+    inputs
 }
 
 fn empty_to_none(input: &str) -> Option<String> {
@@ -534,11 +581,7 @@ fn parse_bool(input: &str) -> Result<Option<bool>, String> {
 }
 
 fn bool_str(b: bool) -> String {
-    if b {
-        "true".into()
-    } else {
-        "false".into()
-    }
+    if b { "true".into() } else { "false".into() }
 }
 
 pub const MENU_ITEMS: &[(&str, EditorView)] = &[
@@ -548,15 +591,10 @@ pub const MENU_ITEMS: &[(&str, EditorView)] = &[
     ("Central repo sync", EditorView::Sync),
 ];
 
-#[allow(dead_code)]
-pub const FORM_MODE_CREATE: FormMode = FormMode::Create;
-#[allow(dead_code)]
-pub const FORM_MODE_UPDATE: FormMode = FormMode::Update;
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::config::Config;
+    use crate::config::{Config, Defaults};
 
     #[test]
     fn toggle_sync_bool_cycles_through_states() {
@@ -584,6 +622,38 @@ mod tests {
         state.defaults_inputs[3] = "  wt  ".into();
         state.apply_defaults(&mut config).unwrap();
         assert_eq!(config.defaults.terminal_command.as_deref(), Some("wt"));
+    }
+
+    fn template_defaults() -> Config {
+        let mut config = Config::default();
+        config.defaults.command = ConnectCommand::Template {
+            program: "kitty".into(),
+            args: vec!["+kitten".into(), "ssh".into(), "{user}@{host}".into()],
+        };
+        config
+    }
+
+    #[test]
+    fn apply_defaults_keeps_template_args_when_the_program_is_unchanged() {
+        let mut config = template_defaults();
+        let expected = config.defaults.command.clone();
+        let mut state = EditorState::from_config(&config);
+        state.defaults_inputs[1] = "2222".into();
+        state.apply_defaults(&mut config).unwrap();
+        assert_eq!(config.defaults.port, 2222);
+        assert_eq!(config.defaults.command, expected);
+    }
+
+    #[test]
+    fn apply_defaults_drops_template_args_when_the_program_changes() {
+        let mut config = template_defaults();
+        let mut state = EditorState::from_config(&config);
+        state.defaults_inputs[0] = "mosh".into();
+        state.apply_defaults(&mut config).unwrap();
+        assert_eq!(
+            config.defaults.command,
+            ConnectCommand::Program("mosh".into())
+        );
     }
 
     #[test]
@@ -685,7 +755,7 @@ mod tests {
 
     fn config_with(categories: Vec<(&str, Vec<&str>)>) -> Config {
         Config {
-            defaults: Default::default(),
+            defaults: Defaults::default(),
             sync: None,
             categories: categories
                 .into_iter()

@@ -2,7 +2,7 @@
 
 ## Toolchain
 
-`hoppr` pins its toolchain in [`rust-toolchain.toml`](../rust-toolchain.toml). Anything ≥ 1.75 should work locally, but CI uses the pinned channel.
+[`rust-toolchain.toml`](../rust-toolchain.toml) selects the `stable` channel (plus `rustfmt` and `clippy`) for both local builds and CI — it tracks the latest stable release rather than pinning a version. The minimum supported Rust version is **1.88**, the highest `rust-version` declared by a dependency (`ratatui` 0.30 and `time` 0.3); it is recorded as `rust-version` in `Cargo.toml`.
 
 ```bash
 rustup show                   # confirm the channel is installed
@@ -42,13 +42,14 @@ cargo run -- sync push -m "init"
 
 ## Commits
 
-Conventional Commits **only**. See [`CONTRIBUTING.md`](../CONTRIBUTING.md). The `commit-msg` hook (from `commitlint`) enforces this when you have Node installed locally:
+Conventional Commits **only**. See [`CONTRIBUTING.md`](../CONTRIBUTING.md). The rules live in [`commitlint.config.cjs`](../commitlint.config.cjs).
+
+There is no local `commit-msg` hook. The `commitlint` job in CI lints every commit of a pull request (base..head), so a single non-conforming commit fails the PR — the PR title itself is not checked. To run the same check locally before pushing (optional, needs Node):
 
 ```bash
-npm install                    # installs husky + commitlint hooks
+npm install                               # installs commitlint
+npx commitlint --from=origin/main         # lint the commits on your branch
 ```
-
-(Optional — CI will reject non-conforming PR titles either way.)
 
 ## Release process
 
@@ -78,6 +79,8 @@ From the GitHub UI:
    - creates an annotated `vX.Y.Z` tag and pushes both,
    - calls `gh release create vX.Y.Z --generate-notes` and attaches all five archives plus `checksums.txt`.
 
+The `version` and `bump` inputs and `github.ref` reach the workflow's shell steps as step-level `env:` variables rather than being interpolated into the `run:` scripts, so an input value is never parsed as shell code; the `commitlint` job in `ci.yml` receives the pull-request SHAs the same way.
+
 No human edits `Cargo.toml`'s version directly — the workflow owns it. To prepare a major release, write commits with `feat!:` or a `BREAKING CHANGE:` footer so reviewers know what's coming, then trigger the workflow with `bump: major` (or pass the exact `version`).
 
 ## Project layout
@@ -101,4 +104,4 @@ Justify it in the PR description. We keep `cargo build` under 2 minutes cold. He
 
 - The TUI runs in a real terminal — `cargo test` covers a snapshot via `TestBackend`, but visual tweaks need a human eye.
 - For the in-TUI editor, the `tempfile` crate is gold for round-tripping the YAML in tests.
-- When debugging sync, set `RUST_LOG=trace` (not yet wired but planned) or shell into the local clone (`hoppr sync status` prints the path).
+- When debugging sync, shell into the local clone (`hoppr sync status` prints the path).

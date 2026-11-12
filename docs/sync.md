@@ -34,7 +34,7 @@ Three action buttons sit underneath the form. Tab/↑↓ moves focus through the
 
 - **[Test]** — _read-only probe._ Runs a credentialed `ls-remote` against the URL currently in the form. Nothing is written to disk, so you can confirm SSH keys / tokens before committing the config.
 - **[Pull now]** — _apply + pull._ Applies the form and then clones (first run) or fast-forward pulls. The latest inventory is loaded into the running session as soon as the network call finishes. The local `config.yaml` is **not** rewritten.
-- **[Save & push]** — _write + push if auto._ Applies the form and writes the local config to disk. When `auto-push` is on, the inventory is committed and pushed upstream in the same step. `Ctrl+S` is kept as a parallel keyboard shortcut for muscle memory.
+- **[Save & push]** — _write + push if auto._ Applies the form and writes the local config to disk. When `auto-push` is on, the inventory is committed and pushed upstream in the same step. The push blocks the UI for the length of the git round-trip; `Saved · pushing …` is shown meanwhile and the status bar reports the outcome. If the push fails the config is still written: the editor footer reads `Saved locally · push failed` and the status bar carries the error. `Ctrl+S` does the same from any field of the form. If the form does not validate, the error is shown and nothing is written.
 
 Pressing `Enter` while focused on a plain text field still applies the form silently — and triggers an auto-clone if `sync.local` is missing — so the form remains usable for keyboard-only flows.
 
@@ -87,10 +87,12 @@ Any additional top-level keys in the file (left over from an older full-config l
 The credential callback tries, in order:
 
 1. The running SSH agent (any key it has loaded).
-2. `~/.ssh/id_ed25519`, `~/.ssh/id_rsa`, `~/.ssh/id_ecdsa` (the first one that exists).
+2. Each private key in `~/.ssh`, one after the other: `id_ed25519`, `id_rsa`, `id_ecdsa`, `id_dsa`, then any other `id_*` file (not `*.pub`) in name order.
 3. `HOPPR_GIT_USER` + `HOPPR_GIT_TOKEN` environment variables (for HTTPS).
 4. The OS git credential helper (`credential.helper` from your global git config).
 5. Default credentials.
+
+Each source is offered once. When the server rejects one (or no agent is running), hoppr moves on to the next; when all of them have been rejected the operation fails with `every available credential was rejected`. Only the sources that fit the transport are used — steps 1–2 for SSH remotes, steps 3–4 for HTTPS.
 
 SSH passphrase-protected keys are only usable via the agent — load them with `ssh-add` first.
 
@@ -123,8 +125,8 @@ The sync chip in the footer encodes its state with a glyph **and** a colour, so 
 - A push that would race against a remote update fails. Re-pull and try again.
 - The pull happens **before** the YAML is parsed; a corrupt upstream file will surface as a startup error, not silently override your local state.
 - Writes go via a `*.tmp` sibling + rename, so an interrupted save can't truncate your config.
-- The saved config file is `chmod 0600` on Unix.
-- HTTPS URLs containing `user:token@` are redacted in error messages and `hoppr sync status` output.
+- The saved config file is created with mode `0600` on Unix, so it is never readable by other users, not even while it is being written.
+- Credentials embedded in the repo URL are redacted in error messages and `hoppr sync status` output: an HTTP(S) URL loses its whole `user:token@` part, any other `scheme://` URL (`ssh://`, `git://`, …) keeps the user name and loses only `:password`.
 - `sync.path` values containing `..` segments are rejected — hoppr falls back to `config.yaml`.
 - If `sync.local` exists but isn't a usable git repo (most commonly the half-cloned residue of a failed first run), hoppr wipes the directory and re-clones on the next start — provided it's empty or only contains a broken `.git/`. Directories with unrelated files are left alone and a clear error is surfaced so user data is never clobbered.
 

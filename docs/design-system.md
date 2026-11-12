@@ -10,7 +10,6 @@ All UI styling for `hoppr` flows through `src/theme.rs`. New colors, modifiers a
 | `surface`       | `#12131a` | Popovers, modal background.                               |
 | `surface_alt`   | `#1a1c25` | Selected row tint.                                        |
 | `border`        | `#252834` | Default panel border.                                     |
-| `border_strong` | `#3a3e4e` | Hover / form-field border.                                |
 | `text`          | `#f1f3f9` | Primary text.                                             |
 | `text_dim`      | `#8a92a6` | Secondary text — inactive labels.                         |
 | `text_muted`    | `#555c70` | Tertiary text — meta info, hints.                         |
@@ -26,12 +25,21 @@ All UI styling for `hoppr` flows through `src/theme.rs`. New colors, modifiers a
 | method                       | semantic                                       |
 | ---------------------------- | ---------------------------------------------- |
 | `Theme::base()`              | Default canvas style (`text` on `bg`).         |
-| `Theme::surface_style()`     | Modal / popover surface.                       |
-| `Theme::muted()`             | Secondary text on canvas.                      |
-| `Theme::dim()`               | Tertiary text on canvas.                       |
 | `Theme::border_style(active)`| Primary when `active`, neutral otherwise.      |
 | `Theme::highlight_primary()` | Selected-row tint, brand-accented.             |
 | `Theme::highlight_accent()`  | Selected-row tint, accent-colored.             |
+| `Theme::bold(color)`         | Bold text in any palette color.                |
+| `Theme::title()`             | Active titles, key hints (`primary_glow`, bold).|
+| `Theme::key()`               | Key column of the help overlay (`accent`, bold).|
+| `Theme::cursor()`            | Blinking search caret.                         |
+| `Theme::selectable(selected)`| List row / button label: bold `text` when selected, `text_dim` otherwise. |
+| `Theme::panel()`             | Modal / popover fill (`surface` background).   |
+| `Theme::panel_border(color)` | Border drawn on a `surface` fill.              |
+| `Theme::button_fill(active)` | Button background: `surface_alt` when focused. |
+| `Theme::input_border(active, invalid)` | Form-field border color: `error` when invalid, `primary` when focused, `border` otherwise. |
+| `theme::selection_glyph(selected)` | Leading row marker (`ACTIVE_GLYPH` / `INACTIVE_GLYPH`). |
+
+A plain foreground color needs no helper: ratatui converts a palette `Color` into a `Style`, so pass the token directly (`Span::styled("…", theme.text_muted)`). `ui.rs` never builds a `Style` by hand.
 
 ## Layout primitives
 
@@ -46,10 +54,10 @@ The 1-row status bar above the hint line has three slots:
 | slot                    | shows                                                                                  |
 | ----------------------- | -------------------------------------------------------------------------------------- |
 | left (32 chars)         | Sync chip: `●` colored by state + label. When the repo has been pulled at least once in the session the label becomes `synced 2m ago`, refreshed every 200 ms. A bold `· unpushed` suffix appears when `sync::has_uncommitted_changes` is true. |
-| middle (flex)           | Optional `filter: "q"` chip (or `global: "q"` with `Ctrl+A`), then either a transient status message colored by `MessageKind` (✓ success / · info / ⚠ warn / ✕ error) or, when no message is active, the resolved connection command of the selected host (`[name] ssh user@ip:22`). |
+| middle (flex)           | Optional `filter: "q"` chip (or `global: "q"` with `Ctrl+A`), then either a transient status message colored by `MessageKind` (✓ success / · info / ✕ error) or, when no message is active, the resolved connection command of the selected host (`[name] ssh user@ip:22`). |
 | right (20 chars)        | `<filtered>/<total> hosts`.                                                            |
 
-`MessageKind` controls both color and TTL: `Success`/`Info` fade after 3 s, `Warn` after 6 s, `Error` after 10 s. Once the TTL expires the middle slot reverts to the selected-host preview. Always pick the right severity at the call site — use `App::set_status_success` / `set_status_warn` / `set_status_error` rather than plain `set_status` (which defaults to info).
+`MessageKind` controls both color and TTL: `Success`/`Info` fade after 3 s, `Error` after 10 s. Once the TTL expires the middle slot reverts to the selected-host preview. Always pick the right severity at the call site — use `App::set_status_success` / `set_status_error` rather than plain `set_status` (which defaults to info).
 
 ## Brand assets
 

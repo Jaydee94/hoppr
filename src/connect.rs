@@ -10,7 +10,7 @@
 
 use std::{env, process::Command};
 
-use crate::config::{Config, ConnectCommand, Host};
+use crate::config::{Config, Host};
 
 pub fn build_command(config: &Config, host: &Host) -> Command {
     if let Some(cmd) = host.cmd.as_deref() {
@@ -30,7 +30,6 @@ pub fn build_command(config: &Config, host: &Host) -> Command {
         // legacy fallback (env $USER, then "root") so the rendered command
         // is never empty where the template asked for a user.
         let user_for_template = explicit_user
-            .clone()
             .or_else(|| env::var("USER").ok())
             .filter(|v| !v.is_empty())
             .unwrap_or_else(|| String::from("root"));
@@ -78,7 +77,7 @@ pub fn build_command(config: &Config, host: &Host) -> Command {
 
 /// Resolve the connection user from host → defaults. Returns `None` when
 /// the user is deliberately unset so callers can drop the `user@` prefix
-/// and defer to ssh_config / the program's own logic.
+/// and defer to `ssh_config` / the program's own logic.
 pub fn effective_user(config: &Config, host: &Host) -> Option<String> {
     host.user
         .clone()
@@ -127,19 +126,10 @@ pub fn describe(config: &Config, host: &Host) -> String {
     }
 }
 
-#[allow(dead_code)]
-pub fn supports_template(template: &ConnectCommand) -> bool {
-    template.args().is_some()
-        || matches!(
-            template.program(),
-            "ssh" | "autossh" | "mosh" | "telnet" | "rsh" | "et"
-        )
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::config::Category;
+    use crate::config::{Category, ConnectCommand};
 
     fn make_config(default: ConnectCommand) -> Config {
         Config {

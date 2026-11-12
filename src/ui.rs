@@ -11,27 +11,27 @@
 //! │  status │ keys                                     │  footer
 //! └────────────────────────────────────────────────────┘
 
+use std::borrow::Cow;
+
 use ratatui::{
+    Frame,
     layout::{Alignment, Constraint, Direction, Layout, Margin, Rect},
-    style::{Modifier, Style},
+    style::Color,
     text::{Line, Span},
     widgets::{Block, BorderType, Borders, Clear, List, ListItem, Paragraph, Wrap},
-    Frame,
 };
 use unicode_width::UnicodeWidthStr;
 
 use crate::{
-    app::{relative_time, App, Focus, MessageKind, Mode, VirtualCategoryKind},
+    app::{App, FilteredHost, Focus, MessageKind, Mode, VirtualCategoryKind, relative_time},
     connect,
     editor::{
-        sync_field_is_bool, CategoryForm, EditorState, EditorView, HostForm, PendingDelete,
-        MENU_ITEMS, SYNC_BTN_SAVE, SYNC_BTN_SYNC, SYNC_BTN_TEST,
+        CategoryForm, EditorState, EditorView, HostForm, MENU_ITEMS, PendingDelete, SYNC_BTN_SAVE,
+        SYNC_BTN_SYNC, SYNC_BTN_TEST, SYNC_INPUT_COUNT, sync_field_is_bool,
     },
     sync::SyncStatus,
-    theme::{Theme, ACTIVE_GLYPH, INACTIVE_GLYPH},
+    theme::{Theme, selection_glyph},
 };
-
-const LOGO: &str = "▄▄▄▄▄ ▄▄▄▄▄ ▄▄▄▄▄ ▄▄▄▄  ▄▄▄▄  ";
 
 /// Number of columns reserved for a category icon, separator excluded.
 const ICON_SLOT_WIDTH: usize = 2;
@@ -60,6 +60,124 @@ fn icon_slot(icon: Option<&str>) -> String {
         None => String::new(),
     }
 }
+
+/// A key (or key combination) and the action it triggers.
+type KeyHint = (&'static str, &'static str);
+
+/// Condition under which a browse-mode footer hint is shown.
+#[derive(Debug, Clone, Copy)]
+enum HintWhen {
+    Always,
+    Searching,
+    CanOpenWindow,
+}
+
+const BROWSE_HINTS: &[(HintWhen, KeyHint)] = &[
+    (HintWhen::Always, ("Tab", "Focus")),
+    (HintWhen::Always, ("/", "Search")),
+    (HintWhen::Searching, ("⌃A", "Search all")),
+    (HintWhen::Always, ("e", "Settings")),
+    (HintWhen::Always, ("f", "Star")),
+    (HintWhen::Always, ("↩", "Connect")),
+    (HintWhen::CanOpenWindow, ("t", "New tab")),
+    (HintWhen::Always, ("?", "Help")),
+    (HintWhen::Always, ("q", "Quit")),
+];
+
+const HINTS_NO_EDITOR: &[KeyHint] = &[("Esc", "Back")];
+const HINTS_CONFIRM_DELETE: &[KeyHint] = &[("y", "Yes"), ("n", "No"), ("Esc", "Cancel")];
+const HINTS_MENU: &[KeyHint] = &[
+    ("↑↓", "Move"),
+    ("↩", "Select"),
+    ("⌃s", "Save"),
+    ("Esc", "Exit"),
+];
+const HINTS_FILTER: &[KeyHint] = &[("Esc", "Close"), ("↩", "Confirm")];
+const HINTS_CATEGORIES: &[KeyHint] = &[
+    ("↑↓", "Move"),
+    ("↩", "Edit"),
+    ("a", "Add"),
+    ("d", "Delete"),
+    ("/", "Filter"),
+    ("⌃s", "Save"),
+    ("Esc", "Back"),
+];
+const HINTS_HOSTS: &[KeyHint] = &[
+    ("↑↓", "Move"),
+    ("Tab/⇧Tab", "± category"),
+    ("↩", "Edit"),
+    ("a", "Add"),
+    ("d", "Delete"),
+    ("/", "Filter"),
+    ("⌃s", "Save"),
+    ("Esc", "Back"),
+];
+const HINTS_FORM: &[KeyHint] = &[
+    ("↑↓", "Move"),
+    ("↩", "Confirm"),
+    ("⌃s", "Confirm + save"),
+    ("Esc", "Cancel"),
+];
+const HINTS_DEFAULTS: &[KeyHint] = &[
+    ("↑↓", "Move"),
+    ("↩", "Apply"),
+    ("⌃s", "Apply + save"),
+    ("Esc", "Back"),
+];
+const HINTS_SYNC: &[KeyHint] = &[
+    ("↑↓", "Move"),
+    ("Space", "Toggle"),
+    ("↩", "Apply / activate"),
+    ("⌃s", "Apply + save"),
+    ("Esc", "Back"),
+];
+
+/// A titled group of bindings in the help overlay.
+type HelpSection = (&'static str, &'static [KeyHint]);
+
+const HELP_BROWSE: &[KeyHint] = &[
+    ("Tab", "Toggle focus (Categories ↔ Hosts)"),
+    ("/", "Search"),
+    ("Ctrl+A", "Toggle global / current-category search"),
+    ("Ctrl+U", "Clear search query"),
+    ("Backspace", "Delete char in search"),
+    ("e", "Open settings editor"),
+    ("f", "Star / unstar host"),
+    ("t", "Open connection in new tab"),
+    ("Enter", "Connect to selected host"),
+    ("↑ ↓ / j k", "Move selection"),
+    ("? / F1", "Toggle this help"),
+    ("q / Esc / Ctrl+C", "Quit"),
+];
+const HELP_SEARCH: &[KeyHint] = &[
+    ("Backspace", "Delete char"),
+    ("Ctrl+U", "Clear query"),
+    ("Ctrl+A", "Toggle global search"),
+    ("Enter", "Confirm and return"),
+];
+const HELP_EDITOR_LISTS: &[KeyHint] = &[
+    ("↑ ↓ / j k", "Move within list"),
+    ("a", "Add"),
+    ("r / Enter", "Edit selected"),
+    ("d", "Delete"),
+    ("Ctrl+S", "Save config to disk"),
+    ("Tab / Shift+Tab", "Next / previous category (Hosts view)"),
+    ("Esc", "Back"),
+];
+const HELP_FORMS: &[KeyHint] = &[
+    ("Tab / Shift+Tab", "Next / previous field"),
+    ("↑ ↓", "Next / previous field"),
+    ("Backspace", "Delete char"),
+    ("Enter", "Confirm"),
+    ("Ctrl+S", "Confirm and save to disk"),
+    ("Esc", "Cancel"),
+];
+
+/// Help overlay content, one slice of sections per column (left, right).
+const HELP_COLUMNS: [&[HelpSection]; 2] = [
+    &[("Browse", HELP_BROWSE), ("Search input", HELP_SEARCH)],
+    &[("Editor lists", HELP_EDITOR_LISTS), ("Forms", HELP_FORMS)],
+];
 
 pub fn draw(frame: &mut Frame<'_>, app: &mut App) {
     let theme = Theme::midnight();
@@ -103,21 +221,13 @@ fn draw_header(frame: &mut Frame<'_>, app: &App, theme: &Theme, area: Rect) {
 
     let logo = Paragraph::new(vec![
         Line::from(vec![
-            Span::styled(
-                "hoppr",
-                Style::default()
-                    .fg(theme.primary_glow)
-                    .add_modifier(Modifier::BOLD),
-            ),
+            Span::styled("hoppr", theme.title()),
             Span::raw(" "),
-            Span::styled("▍", Style::default().fg(theme.accent)),
-            Span::styled("▍", Style::default().fg(theme.primary)),
-            Span::styled("▍", Style::default().fg(theme.primary_glow)),
+            Span::styled("▍", theme.accent),
+            Span::styled("▍", theme.primary),
+            Span::styled("▍", theme.primary_glow),
         ]),
-        Line::from(Span::styled(
-            "remote shell launcher",
-            Style::default().fg(theme.text_muted),
-        )),
+        Line::from(Span::styled("remote shell launcher", theme.text_muted)),
     ])
     .style(theme.base())
     .block(Block::default().style(theme.base()));
@@ -125,35 +235,29 @@ fn draw_header(frame: &mut Frame<'_>, app: &App, theme: &Theme, area: Rect) {
 
     let search_active = app.focus == Focus::Search;
     let placeholder = if app.search_query.is_empty() && !search_active {
-        Span::styled("Type / to search", Style::default().fg(theme.text_muted))
+        Span::styled("Type / to search", theme.text_muted)
     } else {
-        Span::styled(app.search_query.as_str(), Style::default().fg(theme.text))
+        Span::styled(app.search_query.as_str(), theme.text)
     };
     let mut spans = vec![
         Span::styled(
             " 󰍉 ",
-            Style::default().fg(if search_active {
+            if search_active {
                 theme.accent
             } else {
                 theme.text_dim
-            }),
+            },
         ),
         placeholder,
     ];
     if search_active {
-        spans.push(Span::styled(
-            "▌",
-            Style::default()
-                .fg(theme.accent)
-                .add_modifier(Modifier::SLOW_BLINK),
-        ));
+        spans.push(Span::styled("▌", theme.cursor()));
     }
 
     let search = Paragraph::new(Line::from(spans))
         .style(theme.base())
         .block(block("Search", search_active, theme));
     frame.render_widget(search, split[1]);
-    let _ = LOGO; // retained as a fallback for unicode-poor terminals
 }
 
 fn draw_body(frame: &mut Frame<'_>, app: &mut App, theme: &Theme, area: Rect) {
@@ -165,8 +269,7 @@ fn draw_body(frame: &mut Frame<'_>, app: &mut App, theme: &Theme, area: Rect) {
     let mut categories_state = app.categories_state;
     let mut hosts_state = app.hosts_state;
 
-    let categories_display = app.categories_for_display();
-    if categories_display.is_empty() {
+    if app.total_category_count() == 0 {
         let block = block("Categories", app.focus == Focus::Categories, theme);
         let hint = empty_state_paragraph("No categories yet", "Press e → Manage categories", theme)
             .block(block);
@@ -177,16 +280,13 @@ fn draw_body(frame: &mut Frame<'_>, app: &mut App, theme: &Theme, area: Rect) {
     }
 
     let hosts = app.filtered_hosts();
+    let hosts_block = block(&hosts_title(app), app.focus == Focus::Hosts, theme);
     if hosts.is_empty() {
-        let (title, headline, sub) = hosts_empty_state(app);
-        let hint = empty_state_paragraph(&headline, &sub, theme).block(block_owned(
-            title,
-            app.focus == Focus::Hosts,
-            theme,
-        ));
+        let (headline, sub) = hosts_empty_state(app);
+        let hint = empty_state_paragraph(&headline, sub, theme).block(hosts_block);
         frame.render_widget(hint, split[1]);
     } else {
-        let list = build_hosts(app, theme);
+        let list = build_hosts(app, &hosts, theme).block(hosts_block);
         frame.render_stateful_widget(list, split[1], &mut hosts_state);
     }
 
@@ -194,53 +294,49 @@ fn draw_body(frame: &mut Frame<'_>, app: &mut App, theme: &Theme, area: Rect) {
     app.hosts_state = hosts_state;
 }
 
+fn is_global_search(app: &App) -> bool {
+    app.search_all && !app.search_query.trim().is_empty()
+}
+
+fn hosts_title(app: &App) -> String {
+    if is_global_search(app) {
+        return "Hosts · All Categories".to_string();
+    }
+    match app.current_virtual_category() {
+        Some(VirtualCategoryKind::Recent) => "Hosts · Recent".to_string(),
+        Some(VirtualCategoryKind::Starred) => "Hosts · Starred".to_string(),
+        None => match app.current_category() {
+            Some(cat) => format!("Hosts · {}", cat.name),
+            None => "Hosts".to_string(),
+        },
+    }
+}
+
 /// Choose the right empty-state copy for the hosts panel based on which
 /// virtual / real category is active and whether a search query is in play.
-/// Returns `(title, headline, subtext)`.
-fn hosts_empty_state(app: &App) -> (String, String, String) {
+/// Returns `(headline, subtext)`.
+fn hosts_empty_state(app: &App) -> (String, &'static str) {
     let query = app.search_query.trim();
     if !query.is_empty() {
-        let title = if app.search_all {
-            "Hosts · All Categories".to_string()
-        } else {
-            match app.current_virtual_category() {
-                Some(VirtualCategoryKind::Recent) => "Hosts · Recent".to_string(),
-                Some(VirtualCategoryKind::Starred) => "Hosts · Starred".to_string(),
-                None => match app.current_category() {
-                    Some(cat) => format!("Hosts · {}", cat.name),
-                    None => "Hosts".to_string(),
-                },
-            }
-        };
         return (
-            title,
             format!("No hosts match \"{query}\""),
-            "Try Ctrl+A for global search.".to_string(),
+            "Try Ctrl+A for global search.",
         );
     }
 
     match app.current_virtual_category() {
         Some(VirtualCategoryKind::Recent) => (
-            "Hosts · Recent".to_string(),
             "Recent is empty".to_string(),
-            "Connect to a host to populate Recent.".to_string(),
+            "Connect to a host to populate Recent.",
         ),
         Some(VirtualCategoryKind::Starred) => (
-            "Hosts · Starred".to_string(),
             "No starred hosts yet".to_string(),
-            "Press f on a host to star it.".to_string(),
+            "Press f on a host to star it.",
         ),
-        None => {
-            let title = match app.current_category() {
-                Some(cat) => format!("Hosts · {}", cat.name),
-                None => "Hosts".to_string(),
-            };
-            (
-                title,
-                "No hosts in this category".to_string(),
-                "Press e → Manage hosts.".to_string(),
-            )
-        }
+        None => (
+            "No hosts in this category".to_string(),
+            "Press e → Manage hosts.",
+        ),
     }
 }
 
@@ -250,13 +346,8 @@ fn hosts_empty_state(app: &App) -> (String, String, String) {
 fn empty_state_paragraph<'a>(headline: &'a str, sub: &'a str, theme: &Theme) -> Paragraph<'a> {
     Paragraph::new(vec![
         Line::from(""),
-        Line::from(Span::styled(
-            headline,
-            Style::default()
-                .fg(theme.text_dim)
-                .add_modifier(Modifier::BOLD),
-        )),
-        Line::from(Span::styled(sub, Style::default().fg(theme.text_muted))),
+        Line::from(Span::styled(headline, Theme::bold(theme.text_dim))),
+        Line::from(Span::styled(sub, theme.text_muted)),
     ])
     .alignment(Alignment::Center)
     .style(theme.base())
@@ -264,38 +355,24 @@ fn empty_state_paragraph<'a>(headline: &'a str, sub: &'a str, theme: &Theme) -> 
 }
 
 fn build_categories<'a>(app: &'a App, theme: &Theme) -> List<'a> {
-    let cats = app.categories_for_display();
-    let items: Vec<ListItem> = cats
+    let items: Vec<ListItem> = app
+        .categories_for_display()
         .into_iter()
         .enumerate()
         .map(|(idx, cat)| {
             let selected = app.categories_state.selected() == Some(idx);
-            let prefix = if selected {
-                ACTIVE_GLYPH
-            } else {
-                INACTIVE_GLYPH
-            };
-            let name_color = if cat.is_virtual {
-                if selected {
-                    theme.accent
-                } else {
-                    theme.text_dim
-                }
-            } else if selected {
-                theme.text
-            } else {
-                theme.text_dim
+            let name_color = match (selected, cat.is_virtual) {
+                (true, true) => theme.accent,
+                (true, false) => theme.text,
+                (false, _) => theme.text_dim,
             };
 
-            let mut spans = vec![Span::styled(prefix, Style::default().fg(theme.primary))];
+            let mut spans = vec![Span::styled(selection_glyph(selected), theme.primary)];
             let slot = icon_slot(cat.icon);
             if !slot.is_empty() {
-                spans.push(Span::styled(slot, Style::default().fg(theme.text)));
+                spans.push(Span::styled(slot, theme.text));
             }
-            spans.push(Span::styled(
-                cat.name.to_owned(),
-                Style::default().fg(name_color),
-            ));
+            spans.push(Span::styled(cat.name, name_color));
             ListItem::new(Line::from(spans))
         })
         .collect();
@@ -306,10 +383,8 @@ fn build_categories<'a>(app: &'a App, theme: &Theme) -> List<'a> {
         .highlight_style(theme.highlight_primary())
 }
 
-fn build_hosts<'a>(app: &'a App, theme: &Theme) -> List<'a> {
-    let hosts = app.filtered_hosts();
-    let show_category = (app.search_all && !app.search_query.trim().is_empty())
-        || app.current_virtual_category().is_some();
+fn build_hosts(app: &App, hosts: &[FilteredHost<'_>], theme: &Theme) -> List<'static> {
+    let show_category = is_global_search(app) || app.current_virtual_category().is_some();
 
     let items: Vec<ListItem> = hosts
         .iter()
@@ -317,58 +392,27 @@ fn build_hosts<'a>(app: &'a App, theme: &Theme) -> List<'a> {
         .map(|(idx, fh)| {
             let host = fh.host;
             let selected = app.hosts_state.selected() == Some(idx);
-            let prefix = if selected {
-                ACTIVE_GLYPH
+            let star = if app.favorites.is_favorite(fh.category_name, &host.name) {
+                "★ "
             } else {
-                INACTIVE_GLYPH
+                ""
             };
-            let descriptor = connect::describe(&app.config, host);
-            let is_fav = app.favorites.is_favorite(fh.category_name, &host.name);
-
             let name_text = if show_category {
-                format!(
-                    "[{}] {}{}",
-                    fh.category_name,
-                    if is_fav { "★ " } else { "" },
-                    host.name
-                )
+                format!("[{}] {star}{}", fh.category_name, host.name)
             } else {
-                format!("{}{}", if is_fav { "★ " } else { "" }, host.name)
+                format!("{star}{}", host.name)
             };
 
-            let name_style = Style::default()
-                .fg(if selected { theme.text } else { theme.text_dim })
-                .add_modifier(if selected {
-                    Modifier::BOLD
-                } else {
-                    Modifier::empty()
-                });
-
-            let line = Line::from(vec![
-                Span::styled(prefix, Style::default().fg(theme.accent)),
-                Span::styled(name_text, name_style),
+            ListItem::new(Line::from(vec![
+                Span::styled(selection_glyph(selected), theme.accent),
+                Span::styled(name_text, theme.selectable(selected)),
                 Span::raw("   "),
-                Span::styled(descriptor, Style::default().fg(theme.text_muted)),
-            ]);
-            ListItem::new(line)
+                Span::styled(connect::describe(&app.config, host), theme.text_muted),
+            ]))
         })
         .collect();
 
-    let title = if app.search_all && !app.search_query.trim().is_empty() {
-        "Hosts · All Categories".to_string()
-    } else {
-        match app.current_virtual_category() {
-            Some(VirtualCategoryKind::Recent) => "Hosts · Recent".to_string(),
-            Some(VirtualCategoryKind::Starred) => "Hosts · Starred".to_string(),
-            None => match app.current_category() {
-                Some(cat) => format!("Hosts · {}", cat.name),
-                None => "Hosts".to_string(),
-            },
-        }
-    };
-
     List::new(items)
-        .block(block_owned(title, app.focus == Focus::Hosts, theme))
         .style(theme.base())
         .highlight_style(theme.highlight_accent())
 }
@@ -392,11 +436,8 @@ fn draw_status(frame: &mut Frame<'_>, app: &App, theme: &Theme, area: Rect) {
     let host_count = app.filtered_hosts().len();
     let total_hosts: usize = app.config.categories.iter().map(|c| c.hosts.len()).sum();
     let stats = Paragraph::new(Line::from(vec![
-        Span::styled(
-            format!("{host_count}/{total_hosts}"),
-            Style::default().fg(theme.text),
-        ),
-        Span::styled(" hosts ", Style::default().fg(theme.text_muted)),
+        Span::styled(format!("{host_count}/{total_hosts}"), theme.text),
+        Span::styled(" hosts ", theme.text_muted),
     ]))
     .alignment(Alignment::Right)
     .style(theme.base());
@@ -409,45 +450,37 @@ fn draw_status(frame: &mut Frame<'_>, app: &App, theme: &Theme, area: Rect) {
 /// at least once in this session. The glyph is redundant with the colour
 /// so colourblind users can still distinguish the states.
 fn sync_chip(app: &App, theme: &Theme) -> Line<'static> {
-    let (glyph, color, label) = match app.sync_status {
-        SyncStatus::Disabled => ("⊘", theme.text_muted, "sync off".to_string()),
-        SyncStatus::Skipped => ("⊘", theme.text_muted, "sync skipped".to_string()),
-        SyncStatus::Failed => ("✕", theme.error, "sync error".to_string()),
-        SyncStatus::UpToDate | SyncStatus::Pulled => {
-            let label = match app.last_sync_at {
-                Some(t) => format!("synced {}", relative_time(t.elapsed())),
-                None => "synced".to_string(),
-            };
-            ("✓", theme.success, label)
-        }
-        SyncStatus::PulledWithChanges => {
-            let label = match app.last_sync_at {
-                Some(t) => format!("synced {}", relative_time(t.elapsed())),
-                None => "synced".to_string(),
-            };
-            ("↻", theme.accent, label)
+    let status = app.sync_status;
+    let (glyph, color) = match status {
+        SyncStatus::Disabled | SyncStatus::Skipped => ("⊘", theme.text_muted),
+        SyncStatus::Failed => ("✕", theme.error),
+        SyncStatus::UpToDate | SyncStatus::Pulled => ("✓", theme.success),
+        SyncStatus::PulledWithChanges => ("↻", theme.accent),
+    };
+    let label: Cow<'static, str> = match status {
+        SyncStatus::Disabled | SyncStatus::Skipped | SyncStatus::Failed => status.label().into(),
+        SyncStatus::UpToDate | SyncStatus::Pulled | SyncStatus::PulledWithChanges => {
+            match app.last_sync_at {
+                Some(t) => format!("synced {}", relative_time(t.elapsed())).into(),
+                None => "synced".into(),
+            }
         }
     };
 
     let mut spans = vec![
-        Span::styled(format!(" {glyph} "), Style::default().fg(color)),
-        Span::styled(label, Style::default().fg(theme.text_dim)),
+        Span::styled(format!(" {glyph} "), color),
+        Span::styled(label, theme.text_dim),
     ];
     if app.sync_dirty == Some(true) {
-        spans.push(Span::styled(" · ", Style::default().fg(theme.text_muted)));
-        spans.push(Span::styled(
-            "! unpushed",
-            Style::default()
-                .fg(theme.warning)
-                .add_modifier(Modifier::BOLD),
-        ));
+        spans.push(Span::styled(" · ", theme.text_muted));
+        spans.push(Span::styled("! unpushed", Theme::bold(theme.warning)));
     }
     Line::from(spans)
 }
 
 /// Compose the middle slot:
 ///   1. when a search query narrows the list, prefix with a
-///      `filter: "q"` chip (or `global: "q"` when search_all is on);
+///      `filter: "q"` chip (or `global: "q"` when `search_all` is on);
 ///   2. then either the active (un-faded) status message with its
 ///      severity glyph + color, or the resolved connection command of
 ///      the currently selected host as a default.
@@ -461,152 +494,94 @@ fn middle_line(app: &App, theme: &Theme) -> Line<'static> {
         } else {
             format!("filter: \"{query}\"")
         };
-        spans.push(Span::styled(
-            label,
-            Style::default()
-                .fg(theme.primary_glow)
-                .add_modifier(Modifier::BOLD),
-        ));
-        spans.push(Span::styled("  ·  ", Style::default().fg(theme.text_muted)));
+        spans.push(Span::styled(label, theme.title()));
+        spans.push(Span::styled("  ·  ", theme.text_muted));
     }
 
     if let Some(msg) = app.active_status() {
         let color = match msg.kind {
             MessageKind::Success => theme.success,
             MessageKind::Info => theme.text_dim,
-            MessageKind::Warn => theme.warning,
             MessageKind::Error => theme.error,
         };
         spans.push(Span::styled(
             format!("{} ", msg.kind.glyph()),
-            Style::default().fg(color).add_modifier(Modifier::BOLD),
+            Theme::bold(color),
         ));
-        spans.push(Span::styled(msg.text.clone(), Style::default().fg(color)));
+        spans.push(Span::styled(msg.text.clone(), color));
     } else if let Some((host, _cat)) = app.selected_host_with_category() {
         let preview = connect::describe(&app.config, host);
-        spans.push(Span::styled(
-            format!("[{}] ", host.name),
-            Style::default().fg(theme.text_dim),
-        ));
-        spans.push(Span::styled(preview, Style::default().fg(theme.text_muted)));
+        spans.push(Span::styled(format!("[{}] ", host.name), theme.text_dim));
+        spans.push(Span::styled(preview, theme.text_muted));
     }
 
     Line::from(spans)
 }
 
 fn draw_hints(frame: &mut Frame<'_>, app: &App, theme: &Theme, area: Rect) {
-    let hints: Vec<(&str, &str)> = match app.mode {
+    let line = match app.mode {
         Mode::Browse => {
-            let mut h = vec![("Tab", "Focus"), ("/", "Search")];
-            if app.focus == Focus::Search || !app.search_query.is_empty() {
-                h.push(("⌃A", "Search all"));
-            }
-            h.push(("e", "Settings"));
-            h.push(("f", "Star"));
-            h.push(("↩", "Connect"));
-            if app.terminal.is_available() {
-                h.push(("t", "New tab"));
-            }
-            h.push(("?", "Help"));
-            h.push(("q", "Quit"));
-            h
+            let searching = app.focus == Focus::Search || !app.search_query.is_empty();
+            let can_open_window = app.terminal.is_available();
+            let visible = BROWSE_HINTS
+                .iter()
+                .filter(|(when, _)| match when {
+                    HintWhen::Always => true,
+                    HintWhen::Searching => searching,
+                    HintWhen::CanOpenWindow => can_open_window,
+                })
+                .map(|(_, hint)| *hint);
+            hint_line(visible, theme)
         }
-        Mode::Edit => {
-            if app
-                .editor
-                .as_ref()
-                .map(|e| e.pending_delete.is_some())
-                .unwrap_or(false)
-            {
-                vec![("y", "Yes"), ("n", "No"), ("Esc", "Cancel")]
-            } else {
-                match app.editor.as_ref().map(|e| e.view) {
-                    Some(EditorView::Menu) => {
-                        vec![("↑↓", "Move"), ("↩", "Select"), ("Esc", "Exit")]
-                    }
-                    Some(EditorView::Categories) => {
-                        if app.editor.as_ref().map(|e| e.filter_focus).unwrap_or(false) {
-                            vec![("Esc", "Close"), ("↩", "Confirm")]
-                        } else {
-                            vec![
-                                ("↑↓", "Move"),
-                                ("↩", "Edit"),
-                                ("a", "Add"),
-                                ("d", "Delete"),
-                                ("/", "Filter"),
-                                ("⌃s", "Save"),
-                                ("Esc", "Back"),
-                            ]
-                        }
-                    }
-                    Some(EditorView::Hosts) => {
-                        if app.editor.as_ref().map(|e| e.filter_focus).unwrap_or(false) {
-                            vec![("Esc", "Close"), ("↩", "Confirm")]
-                        } else {
-                            vec![
-                                ("↑↓", "Move"),
-                                ("Tab/⇧Tab", "± category"),
-                                ("↩", "Edit"),
-                                ("a", "Add"),
-                                ("d", "Delete"),
-                                ("/", "Filter"),
-                                ("⌃s", "Save"),
-                                ("Esc", "Back"),
-                            ]
-                        }
-                    }
-                    Some(EditorView::CategoryForm) | Some(EditorView::HostForm) => {
-                        vec![("↑↓", "Move"), ("↩", "Confirm"), ("Esc", "Cancel")]
-                    }
-                    Some(EditorView::Defaults) => vec![
-                        ("↑↓", "Move"),
-                        ("↩", "Apply"),
-                        ("⌃s", "Save"),
-                        ("Esc", "Back"),
-                    ],
-                    Some(EditorView::Sync) => vec![
-                        ("↑↓", "Move"),
-                        ("Space", "Toggle"),
-                        ("↩", "Apply / activate"),
-                        ("⌃s", "Save"),
-                        ("Esc", "Back"),
-                    ],
-                    None => vec![("Esc", "Back")],
-                }
-            }
-        }
+        Mode::Edit => hint_line(editor_hints(app.editor.as_ref()).iter().copied(), theme),
     };
-    let mut spans = Vec::with_capacity(hints.len() * 4);
-    for (i, (key, label)) in hints.iter().enumerate() {
-        if i > 0 {
-            spans.push(Span::styled("  ·  ", Style::default().fg(theme.text_muted)));
-        }
-        spans.push(Span::styled(
-            format!("[{key}]"),
-            Style::default()
-                .fg(theme.primary_glow)
-                .add_modifier(Modifier::BOLD),
-        ));
-        spans.push(Span::raw(" "));
-        spans.push(Span::styled(*label, Style::default().fg(theme.text_dim)));
-    }
-    let line = Paragraph::new(Line::from(spans))
+    let hints = Paragraph::new(line)
         .style(theme.base())
         .alignment(Alignment::Center);
-    frame.render_widget(line, area);
+    frame.render_widget(hints, area);
+}
+
+fn editor_hints(editor: Option<&EditorState>) -> &'static [KeyHint] {
+    let Some(editor) = editor else {
+        return HINTS_NO_EDITOR;
+    };
+    if editor.pending_delete.is_some() {
+        return HINTS_CONFIRM_DELETE;
+    }
+    match editor.view {
+        EditorView::Menu => HINTS_MENU,
+        EditorView::Categories | EditorView::Hosts if editor.filter_focus => HINTS_FILTER,
+        EditorView::Categories => HINTS_CATEGORIES,
+        EditorView::Hosts => HINTS_HOSTS,
+        EditorView::CategoryForm | EditorView::HostForm => HINTS_FORM,
+        EditorView::Defaults => HINTS_DEFAULTS,
+        EditorView::Sync => HINTS_SYNC,
+    }
+}
+
+/// Footer line of `[key] label` pairs separated by dots.
+fn hint_line(hints: impl Iterator<Item = KeyHint>, theme: &Theme) -> Line<'static> {
+    let mut spans = Vec::new();
+    for (key, label) in hints {
+        if !spans.is_empty() {
+            spans.push(Span::styled("  ·  ", theme.text_muted));
+        }
+        spans.extend([
+            Span::styled("[", theme.title()),
+            Span::styled(key, theme.title()),
+            Span::styled("]", theme.title()),
+            Span::raw(" "),
+            Span::styled(label, theme.text_dim),
+        ]);
+    }
+    Line::from(spans)
 }
 
 fn block(title: &str, active: bool, theme: &Theme) -> Block<'static> {
-    block_owned(title.to_string(), active, theme)
-}
-
-fn block_owned(title: String, active: bool, theme: &Theme) -> Block<'static> {
     let title_style = if active {
-        Style::default()
-            .fg(theme.primary_glow)
-            .add_modifier(Modifier::BOLD)
+        theme.title()
     } else {
-        Style::default().fg(theme.text_dim)
+        theme.text_dim.into()
     };
     Block::default()
         .title(Span::styled(format!(" {title} "), title_style))
@@ -639,18 +614,19 @@ fn centered_rect(percent_x: u16, percent_y: u16, r: Rect) -> Rect {
         .split(popup_layout[1])[1]
 }
 
-fn draw_help(frame: &mut Frame<'_>, theme: &Theme, area: Rect) {
-    let block = Block::default()
+/// Thick-bordered surface shared by the settings editor, the help overlay
+/// and the confirmation prompts.
+fn modal_block(border: Color, theme: &Theme) -> Block<'static> {
+    Block::default()
         .borders(Borders::ALL)
         .border_type(BorderType::Thick)
-        .border_style(Style::default().fg(theme.primary).bg(theme.surface))
-        .style(Style::default().bg(theme.surface))
-        .title(Span::styled(
-            " Keybindings ",
-            Style::default()
-                .fg(theme.primary_glow)
-                .add_modifier(Modifier::BOLD),
-        ));
+        .border_style(theme.panel_border(border))
+        .style(theme.panel())
+}
+
+fn draw_help(frame: &mut Frame<'_>, theme: &Theme, area: Rect) {
+    let block =
+        modal_block(theme.primary, theme).title(Span::styled(" Keybindings ", theme.title()));
     frame.render_widget(block, area);
 
     let inner = area.inner(Margin {
@@ -666,92 +642,36 @@ fn draw_help(frame: &mut Frame<'_>, theme: &Theme, area: Rect) {
         .direction(Direction::Horizontal)
         .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
         .split(split[0]);
-
-    let browse: &[(&str, &str)] = &[
-        ("Tab", "Toggle focus (Categories ↔ Hosts)"),
-        ("/", "Search"),
-        ("Ctrl+A", "Toggle global / current-category search"),
-        ("Ctrl+U", "Clear search query"),
-        ("Backspace", "Delete char in search"),
-        ("e", "Open settings editor"),
-        ("f", "Star / unstar host"),
-        ("t", "Open connection in new tab"),
-        ("Enter", "Connect to selected host"),
-        ("↑ ↓ / j k", "Move selection"),
-        ("? / F1", "Toggle this help"),
-        ("q / Esc / Ctrl+C", "Quit"),
-    ];
-    let editor_lists: &[(&str, &str)] = &[
-        ("↑ ↓ / j k", "Move within list"),
-        ("a", "Add"),
-        ("r / Enter", "Edit selected"),
-        ("d", "Delete"),
-        ("Ctrl+S", "Save config to disk"),
-        ("Tab / Shift+Tab", "Next / previous category (Hosts view)"),
-        ("Esc", "Back"),
-    ];
-    let forms: &[(&str, &str)] = &[
-        ("Tab / Shift+Tab", "Next / previous field"),
-        ("↑ ↓", "Next / previous field"),
-        ("Backspace", "Delete char"),
-        ("Enter", "Confirm"),
-        ("Esc", "Cancel"),
-    ];
-    let search: &[(&str, &str)] = &[
-        ("Backspace", "Delete char"),
-        ("Ctrl+U", "Clear query"),
-        ("Ctrl+A", "Toggle global search"),
-        ("Enter", "Confirm and return"),
-    ];
-
-    let mut left: Vec<Line<'static>> = Vec::new();
-    push_help_section(&mut left, "Browse", browse, theme);
-    left.push(Line::from(""));
-    push_help_section(&mut left, "Search input", search, theme);
-
-    let mut right: Vec<Line<'static>> = Vec::new();
-    push_help_section(&mut right, "Editor lists", editor_lists, theme);
-    right.push(Line::from(""));
-    push_help_section(&mut right, "Forms", forms, theme);
-
-    let left_para = Paragraph::new(left).style(Style::default().bg(theme.surface));
-    frame.render_widget(left_para, columns[0]);
-    let right_para = Paragraph::new(right).style(Style::default().bg(theme.surface));
-    frame.render_widget(right_para, columns[1]);
+    for (sections, column) in HELP_COLUMNS.iter().zip(columns.iter()) {
+        let column_text = Paragraph::new(help_lines(sections, theme)).style(theme.panel());
+        frame.render_widget(column_text, *column);
+    }
 
     let footer = Paragraph::new(Line::from(Span::styled(
         "Press ? or Esc to close",
-        Style::default().fg(theme.text_muted),
+        theme.text_muted,
     )))
     .alignment(Alignment::Center)
-    .style(Style::default().bg(theme.surface));
+    .style(theme.panel());
     frame.render_widget(footer, split[1]);
 }
 
-fn push_help_section(
-    lines: &mut Vec<Line<'static>>,
-    title: &str,
-    entries: &[(&str, &str)],
-    theme: &Theme,
-) {
-    lines.push(Line::from(Span::styled(
-        title.to_string(),
-        Style::default()
-            .fg(theme.primary_glow)
-            .add_modifier(Modifier::BOLD),
-    )));
-    for (key, label) in entries {
-        lines.push(Line::from(vec![
-            Span::raw("  "),
-            Span::styled(
-                format!("{key:<18}"),
-                Style::default()
-                    .fg(theme.accent)
-                    .add_modifier(Modifier::BOLD),
-            ),
-            Span::styled(label.to_string(), Style::default().fg(theme.text_dim)),
-        ]));
+fn help_lines(sections: &[HelpSection], theme: &Theme) -> Vec<Line<'static>> {
+    let mut lines = Vec::new();
+    for (title, entries) in sections {
+        if !lines.is_empty() {
+            lines.push(Line::from(""));
+        }
+        lines.push(Line::from(Span::styled(*title, theme.title())));
+        for (key, label) in *entries {
+            lines.push(Line::from(vec![
+                Span::raw("  "),
+                Span::styled(format!("{key:<18}"), theme.key()),
+                Span::styled(*label, theme.text_dim),
+            ]));
+        }
     }
+    lines
 }
 
 fn draw_editor(frame: &mut Frame<'_>, app: &App, theme: &Theme, area: Rect) {
@@ -759,17 +679,7 @@ fn draw_editor(frame: &mut Frame<'_>, app: &App, theme: &Theme, area: Rect) {
         return;
     };
 
-    let block = Block::default()
-        .borders(Borders::ALL)
-        .border_type(BorderType::Thick)
-        .border_style(Style::default().fg(theme.primary).bg(theme.surface))
-        .style(Style::default().bg(theme.surface))
-        .title(Span::styled(
-            " Settings ",
-            Style::default()
-                .fg(theme.primary_glow)
-                .add_modifier(Modifier::BOLD),
-        ));
+    let block = modal_block(theme.primary, theme).title(Span::styled(" Settings ", theme.title()));
     frame.render_widget(block, area);
 
     let inner = area.inner(Margin {
@@ -799,33 +709,7 @@ fn draw_editor(frame: &mut Frame<'_>, app: &App, theme: &Theme, area: Rect) {
         EditorView::Sync => draw_sync_editor(frame, editor, theme, split[0]),
     }
 
-    let footer_line = if editor.pending_exit {
-        Line::from(vec![
-            Span::styled("● ", Style::default().fg(theme.warning)),
-            Span::styled(
-                "[s] Save  ·  [d] Discard  ·  [c] Cancel",
-                Style::default().fg(theme.text_dim),
-            ),
-        ])
-    } else {
-        let flash = editor.flash.clone().unwrap_or_else(|| {
-            if editor.dirty {
-                "Unsaved changes — press s to save".to_string()
-            } else {
-                "Saved".to_string()
-            }
-        });
-        let footer_color = if editor.dirty {
-            theme.warning
-        } else {
-            theme.success
-        };
-        Line::from(vec![
-            Span::styled("● ", Style::default().fg(footer_color)),
-            Span::styled(flash, Style::default().fg(theme.text_dim)),
-        ])
-    };
-    let footer = Paragraph::new(footer_line).style(Style::default().bg(theme.surface));
+    let footer = Paragraph::new(editor_footer(editor, theme)).style(theme.panel());
     frame.render_widget(footer, split[1]);
 
     if editor.pending_exit {
@@ -836,41 +720,46 @@ fn draw_editor(frame: &mut Frame<'_>, app: &App, theme: &Theme, area: Rect) {
     }
 }
 
+fn editor_footer<'a>(editor: &'a EditorState, theme: &Theme) -> Line<'a> {
+    if editor.pending_exit {
+        return Line::from(vec![
+            Span::styled("● ", theme.warning),
+            Span::styled("[s] Save  ·  [d] Discard  ·  [c] Cancel", theme.text_dim),
+        ]);
+    }
+    let (marker_color, fallback) = if editor.dirty {
+        (theme.warning, "Unsaved changes — press Ctrl+S to save")
+    } else {
+        (theme.success, "Saved")
+    };
+    Line::from(vec![
+        Span::styled("● ", marker_color),
+        Span::styled(editor.flash.as_deref().unwrap_or(fallback), theme.text_dim),
+    ])
+}
+
 fn draw_pending_exit_modal(frame: &mut Frame<'_>, theme: &Theme, area: Rect) {
     let modal = centered_rect(40, 30, area);
     frame.render_widget(Clear, modal);
-    let block = Block::default()
-        .borders(Borders::ALL)
-        .border_type(BorderType::Thick)
-        .border_style(Style::default().fg(theme.warning).bg(theme.surface))
-        .style(Style::default().bg(theme.surface));
-    frame.render_widget(block, modal);
+    frame.render_widget(modal_block(theme.warning, theme), modal);
 
     let inner = modal.inner(Margin {
         horizontal: 2,
         vertical: 1,
     });
     let lines = vec![
-        Line::from(Span::styled(
-            "Unsaved changes",
-            Style::default()
-                .fg(theme.warning)
-                .add_modifier(Modifier::BOLD),
-        )),
+        Line::from(Span::styled("Unsaved changes", Theme::bold(theme.warning))),
         Line::from(""),
-        Line::from(Span::styled(
-            "Save / Discard / Cancel",
-            Style::default().fg(theme.text),
-        )),
+        Line::from(Span::styled("Save / Discard / Cancel", theme.text)),
         Line::from(""),
         Line::from(Span::styled(
             "[s] save · [d] discard · [c] cancel",
-            Style::default().fg(theme.text_muted),
+            theme.text_muted,
         )),
     ];
     let body = Paragraph::new(lines)
         .alignment(Alignment::Center)
-        .style(Style::default().bg(theme.surface));
+        .style(theme.panel());
     frame.render_widget(body, inner);
 }
 
@@ -886,45 +775,23 @@ fn draw_pending_delete(frame: &mut Frame<'_>, editor: &EditorState, theme: &Them
     let popup = centered_rect(50, 30, area);
     frame.render_widget(Clear, popup);
 
-    let block = Block::default()
-        .borders(Borders::ALL)
-        .border_type(BorderType::Thick)
-        .border_style(Style::default().fg(theme.warning).bg(theme.surface))
-        .style(Style::default().bg(theme.surface))
-        .title(Span::styled(
-            " Confirm delete ",
-            Style::default()
-                .fg(theme.warning)
-                .add_modifier(Modifier::BOLD),
-        ));
+    let block = modal_block(theme.warning, theme)
+        .title(Span::styled(" Confirm delete ", Theme::bold(theme.warning)));
 
     let body = Paragraph::new(vec![
-        Line::from(Span::styled(
-            prompt,
-            Style::default().fg(theme.text).add_modifier(Modifier::BOLD),
-        )),
+        Line::from(Span::styled(prompt, Theme::bold(theme.text))),
         Line::from(""),
         Line::from(vec![
-            Span::styled(
-                "[y]",
-                Style::default()
-                    .fg(theme.primary_glow)
-                    .add_modifier(Modifier::BOLD),
-            ),
-            Span::styled(" Yes  ·  ", Style::default().fg(theme.text_dim)),
-            Span::styled(
-                "[n]",
-                Style::default()
-                    .fg(theme.primary_glow)
-                    .add_modifier(Modifier::BOLD),
-            ),
-            Span::styled(" No", Style::default().fg(theme.text_dim)),
+            Span::styled("[y]", theme.title()),
+            Span::styled(" Yes  ·  ", theme.text_dim),
+            Span::styled("[n]", theme.title()),
+            Span::styled(" No", theme.text_dim),
         ]),
     ])
     .alignment(Alignment::Center)
     .wrap(Wrap { trim: true })
     .block(block)
-    .style(Style::default().bg(theme.surface));
+    .style(theme.panel());
     frame.render_widget(body, popup);
 }
 
@@ -934,27 +801,13 @@ fn draw_menu(frame: &mut Frame<'_>, editor: &EditorState, theme: &Theme, area: R
         .enumerate()
         .map(|(i, (label, _))| {
             let selected = i == editor.menu_index;
-            let prefix = if selected {
-                ACTIVE_GLYPH
-            } else {
-                INACTIVE_GLYPH
-            };
             ListItem::new(Line::from(vec![
-                Span::styled(prefix, Style::default().fg(theme.primary)),
-                Span::styled(
-                    *label,
-                    Style::default()
-                        .fg(if selected { theme.text } else { theme.text_dim })
-                        .add_modifier(if selected {
-                            Modifier::BOLD
-                        } else {
-                            Modifier::empty()
-                        }),
-                ),
+                Span::styled(selection_glyph(selected), theme.primary),
+                Span::styled(*label, theme.selectable(selected)),
             ]))
         })
         .collect();
-    let list = List::new(items).style(Style::default().bg(theme.surface));
+    let list = List::new(items).style(theme.panel());
     frame.render_widget(list, area);
 }
 
@@ -965,44 +818,25 @@ fn draw_categories_editor(
     theme: &Theme,
     area: Rect,
 ) {
-    let (filter_area, list_area) = split_filter_area(editor.category_filter.as_deref(), area);
+    let filter = editor.category_filter.as_deref();
+    let list_area = draw_filter_row(frame, filter, editor.filter_focus, theme, area);
 
-    if let Some(filter) = editor.category_filter.as_deref() {
-        if let Some(filter_area) = filter_area {
-            draw_filter_input(frame, filter, editor.filter_focus, theme, filter_area);
-        }
-    }
-
-    let visible = editor.visible_categories(&app.config);
-    let items: Vec<ListItem> = visible
-        .iter()
+    let items: Vec<ListItem> = editor
+        .visible_categories(&app.config)
+        .into_iter()
         .map(|(i, c)| {
-            let selected = *i == editor.categories_index;
-            let prefix = if selected {
-                ACTIVE_GLYPH
-            } else {
-                INACTIVE_GLYPH
-            };
+            let selected = i == editor.categories_index;
             ListItem::new(Line::from(vec![
-                Span::styled(prefix, Style::default().fg(theme.primary)),
+                Span::styled(selection_glyph(selected), theme.primary),
                 Span::raw(icon_slot(c.icon.as_deref())),
-                Span::raw(c.name.clone()),
-                Span::styled(
-                    format!("  ({} hosts)", c.hosts.len()),
-                    Style::default().fg(theme.text_muted),
-                ),
+                Span::raw(c.name.as_str()),
+                Span::styled(format!("  ({} hosts)", c.hosts.len()), theme.text_muted),
             ]))
         })
         .collect();
     let list = List::new(items)
-        .block(
-            Block::default()
-                .title(" Categories ")
-                .borders(Borders::ALL)
-                .border_style(Style::default().fg(theme.border).bg(theme.surface))
-                .style(Style::default().bg(theme.surface)),
-        )
-        .style(Style::default().bg(theme.surface));
+        .block(list_block(" Categories ", theme))
+        .style(theme.panel());
     frame.render_widget(list, list_area);
 }
 
@@ -1013,130 +847,134 @@ fn draw_hosts_editor(
     theme: &Theme,
     area: Rect,
 ) {
-    let (filter_area, list_area) = split_filter_area(editor.host_filter.as_deref(), area);
-
-    if let Some(filter) = editor.host_filter.as_deref() {
-        if let Some(filter_area) = filter_area {
-            draw_filter_input(frame, filter, editor.filter_focus, theme, filter_area);
-        }
-    }
+    let filter = editor.host_filter.as_deref();
+    let list_area = draw_filter_row(frame, filter, editor.filter_focus, theme, area);
 
     let cat = app.config.categories.get(editor.categories_index);
     let items: Vec<ListItem> = match cat {
         Some(_) => editor
             .visible_hosts(&app.config)
-            .iter()
+            .into_iter()
             .map(|(i, host)| {
-                let selected = *i == editor.hosts_index;
-                let prefix = if selected {
-                    ACTIVE_GLYPH
-                } else {
-                    INACTIVE_GLYPH
-                };
+                let selected = i == editor.hosts_index;
                 ListItem::new(Line::from(vec![
-                    Span::styled(prefix, Style::default().fg(theme.accent)),
+                    Span::styled(selection_glyph(selected), theme.accent),
                     Span::raw(format!("{} → {}", host.name, host.ip)),
                 ]))
             })
             .collect(),
         None => vec![ListItem::new("(no category — add one first)")],
     };
-    let title = cat
-        .map(|c| format!(" Hosts · {} ", c.name))
-        .unwrap_or_else(|| " Hosts ".into());
+    let title = match cat {
+        Some(c) => format!(" Hosts · {} ", c.name),
+        None => " Hosts ".to_string(),
+    };
     let list = List::new(items)
-        .block(
-            Block::default()
-                .title(title)
-                .borders(Borders::ALL)
-                .border_style(Style::default().fg(theme.border).bg(theme.surface))
-                .style(Style::default().bg(theme.surface)),
-        )
-        .style(Style::default().bg(theme.surface));
+        .block(list_block(title, theme))
+        .style(theme.panel());
     frame.render_widget(list, list_area);
 }
 
-/// Split the editor list area into an optional 1-line filter row and the
-/// remaining list region. When no filter is active the full area is
-/// returned for the list.
-fn split_filter_area(filter: Option<&str>, area: Rect) -> (Option<Rect>, Rect) {
-    if filter.is_none() {
-        return (None, area);
-    }
+fn list_block<'a>(title: impl Into<Line<'a>>, theme: &Theme) -> Block<'a> {
+    Block::default()
+        .title(title)
+        .borders(Borders::ALL)
+        .border_style(theme.panel_border(theme.border))
+        .style(theme.panel())
+}
+
+/// Draw the one-line filter row above an editor list when a filter is
+/// set, and return the area left for the list (all of `area` otherwise).
+fn draw_filter_row(
+    frame: &mut Frame<'_>,
+    filter: Option<&str>,
+    focus: bool,
+    theme: &Theme,
+    area: Rect,
+) -> Rect {
+    let Some(query) = filter else {
+        return area;
+    };
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([Constraint::Length(1), Constraint::Min(1)])
         .split(area);
-    (Some(chunks[0]), chunks[1])
-}
 
-fn draw_filter_input(frame: &mut Frame<'_>, query: &str, focus: bool, theme: &Theme, area: Rect) {
     let mut spans = vec![
-        Span::styled("🔍 ", Style::default().fg(theme.accent)),
-        Span::styled(query.to_string(), Style::default().fg(theme.text)),
+        Span::styled("🔍 ", theme.accent),
+        Span::styled(query, theme.text),
     ];
     if focus {
-        spans.push(Span::styled("▌", Style::default().fg(theme.accent)));
+        spans.push(caret(theme));
     }
-    let para = Paragraph::new(Line::from(spans)).style(Style::default().bg(theme.surface));
-    frame.render_widget(para, area);
+    let row = Paragraph::new(Line::from(spans)).style(theme.panel());
+    frame.render_widget(row, chunks[0]);
+    chunks[1]
+}
+
+fn caret(theme: &Theme) -> Span<'static> {
+    Span::styled("▌", theme.accent)
+}
+
+fn input_block(border: Color, theme: &Theme) -> Block<'static> {
+    Block::default()
+        .borders(Borders::ALL)
+        .border_type(BorderType::Rounded)
+        .border_style(border)
+        .style(theme.panel())
+}
+
+/// One bordered `label value▌ · error` row of a form. The border turns
+/// to the error color while `error` is set.
+fn input_row<'a>(
+    label: String,
+    value: Span<'a>,
+    active: bool,
+    error: Option<&str>,
+    theme: &Theme,
+) -> Paragraph<'a> {
+    let mut spans = vec![Span::styled(label, theme.text_dim), value];
+    if active {
+        spans.push(caret(theme));
+    }
+    if let Some(err) = error {
+        spans.push(Span::styled(format!(" · {err}"), theme.text_muted));
+    }
+    Paragraph::new(Line::from(spans))
+        .block(input_block(
+            theme.input_border(active, error.is_some()),
+            theme,
+        ))
+        .style(theme.panel())
 }
 
 fn draw_host_form(frame: &mut Frame<'_>, form: &HostForm, theme: &Theme, area: Rect) {
-    let mut constraints: Vec<Constraint> = HostForm::LABELS
-        .iter()
-        .map(|_| Constraint::Length(3))
-        .collect();
     // Args row gets a one-line hint underneath so the placeholder vocabulary
     // is discoverable without leaving the TUI.
-    constraints.push(Constraint::Length(1));
+    let constraints = HostForm::LABELS
+        .iter()
+        .map(|_| Constraint::Length(3))
+        .chain([Constraint::Length(1)]);
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints(constraints)
         .split(area);
     for (i, label) in HostForm::LABELS.iter().enumerate() {
-        let active = form.focused == i;
-        let error = form.field_error(i);
-        let mut spans = vec![
-            Span::styled(
-                format!(" {label:<10} "),
-                Style::default().fg(theme.text_dim),
-            ),
-            Span::styled(form.fields[i].clone(), Style::default().fg(theme.text)),
-        ];
-        if active {
-            spans.push(Span::styled("▌", Style::default().fg(theme.accent)));
-        }
-        if let Some(err) = error {
-            spans.push(Span::styled(
-                format!(" · {err}"),
-                Style::default().fg(theme.text_muted),
-            ));
-        }
-        let border_color = if error.is_some() {
-            theme.error
-        } else if active {
-            theme.primary
-        } else {
-            theme.border
-        };
-        let para = Paragraph::new(Line::from(spans))
-            .block(
-                Block::default()
-                    .borders(Borders::ALL)
-                    .border_type(BorderType::Rounded)
-                    .border_style(Style::default().fg(border_color))
-                    .style(Style::default().bg(theme.surface)),
-            )
-            .style(Style::default().bg(theme.surface));
-        frame.render_widget(para, chunks[i]);
+        let row = input_row(
+            format!(" {label:<10} "),
+            Span::styled(form.fields[i].as_str(), theme.text),
+            form.focused == i,
+            form.field_error(i),
+            theme,
+        );
+        frame.render_widget(row, chunks[i]);
     }
     if let Some(hint_area) = chunks.get(HostForm::LABELS.len()) {
         let hint = Paragraph::new(Line::from(Span::styled(
             HostForm::ARGS_HINT,
-            Style::default().fg(theme.text_muted),
+            theme.text_muted,
         )))
-        .style(Style::default().bg(theme.surface));
+        .style(theme.panel());
         frame.render_widget(hint, *hint_area);
     }
 }
@@ -1144,108 +982,55 @@ fn draw_host_form(frame: &mut Frame<'_>, form: &HostForm, theme: &Theme, area: R
 fn draw_category_form(frame: &mut Frame<'_>, form: &CategoryForm, theme: &Theme, area: Rect) {
     let chunks = Layout::default()
         .direction(Direction::Vertical)
-        .constraints(
-            CategoryForm::LABELS
-                .iter()
-                .map(|_| Constraint::Length(3))
-                .collect::<Vec<_>>(),
-        )
+        .constraints([Constraint::Length(3); CategoryForm::LABELS.len()])
         .split(area);
     for (i, label) in CategoryForm::LABELS.iter().enumerate() {
-        let active = form.focused == i;
-        let error = form.field_error(i);
-        let mut spans = vec![
-            Span::styled(
-                format!(" {label:<10} "),
-                Style::default().fg(theme.text_dim),
-            ),
-            Span::styled(form.fields[i].clone(), Style::default().fg(theme.text)),
-        ];
-        if active {
-            spans.push(Span::styled("▌", Style::default().fg(theme.accent)));
-        }
-        if let Some(err) = error {
-            spans.push(Span::styled(
-                format!(" · {err}"),
-                Style::default().fg(theme.text_muted),
-            ));
-        }
-        let border_color = if error.is_some() {
-            theme.error
-        } else if active {
-            theme.primary
-        } else {
-            theme.border
-        };
-        let para = Paragraph::new(Line::from(spans))
-            .block(
-                Block::default()
-                    .borders(Borders::ALL)
-                    .border_type(BorderType::Rounded)
-                    .border_style(Style::default().fg(border_color))
-                    .style(Style::default().bg(theme.surface)),
-            )
-            .style(Style::default().bg(theme.surface));
-        frame.render_widget(para, chunks[i]);
+        let row = input_row(
+            format!(" {label:<10} "),
+            Span::styled(form.fields[i].as_str(), theme.text),
+            form.focused == i,
+            form.field_error(i),
+            theme,
+        );
+        frame.render_widget(row, chunks[i]);
     }
 }
 
 fn draw_defaults_editor(frame: &mut Frame<'_>, editor: &EditorState, theme: &Theme, area: Rect) {
-    let labels = [
+    const LABELS: [&str; 4] = [
         "Command",
         "Default port",
         "Default user",
         "Terminal command",
     ];
+    const TERMINAL_COMMAND: usize = 3;
+
     let chunks = Layout::default()
         .direction(Direction::Vertical)
-        .constraints(
-            labels
-                .iter()
-                .map(|_| Constraint::Length(3))
-                .collect::<Vec<_>>(),
-        )
+        .constraints([Constraint::Length(3); LABELS.len()])
         .split(area);
-    for (i, label) in labels.iter().enumerate() {
-        let active = editor.defaults_field == i;
+    for (i, label) in LABELS.iter().enumerate() {
         // Terminal command falls back to runtime auto-detection when blank;
         // surface that contract as a muted placeholder rather than an empty cell.
-        let value = &editor.defaults_inputs[i];
-        let value_span = if value.is_empty() && i == 3 {
-            Span::styled("auto-detected", Style::default().fg(theme.text_muted))
+        let value = editor.defaults_inputs[i].as_str();
+        let value_span = if value.is_empty() && i == TERMINAL_COMMAND {
+            Span::styled("auto-detected", theme.text_muted)
         } else {
-            Span::styled(value.clone(), Style::default().fg(theme.text))
+            Span::styled(value, theme.text)
         };
-        let para = Paragraph::new(Line::from(vec![
-            Span::styled(
-                format!(" {label:<16} "),
-                Style::default().fg(theme.text_dim),
-            ),
+        let row = input_row(
+            format!(" {label:<16} "),
             value_span,
-            if active {
-                Span::styled("▌", Style::default().fg(theme.accent))
-            } else {
-                Span::raw("")
-            },
-        ]))
-        .block(
-            Block::default()
-                .borders(Borders::ALL)
-                .border_type(BorderType::Rounded)
-                .border_style(Style::default().fg(if active {
-                    theme.primary
-                } else {
-                    theme.border
-                }))
-                .style(Style::default().bg(theme.surface)),
-        )
-        .style(Style::default().bg(theme.surface));
-        frame.render_widget(para, chunks[i]);
+            editor.defaults_field == i,
+            None,
+            theme,
+        );
+        frame.render_widget(row, chunks[i]);
     }
 }
 
 fn draw_sync_editor(frame: &mut Frame<'_>, editor: &EditorState, theme: &Theme, area: Rect) {
-    let labels = [
+    const LABELS: [&str; SYNC_INPUT_COUNT] = [
         "Repo URL",
         "Branch",
         "Path in repo",
@@ -1253,37 +1038,27 @@ fn draw_sync_editor(frame: &mut Frame<'_>, editor: &EditorState, theme: &Theme, 
         "Auto-pull",
         "Auto-push",
     ];
+    const BUTTON_ROW_HEIGHT: u16 = 4;
+
+    let constraints = LABELS
+        .iter()
+        .map(|_| Constraint::Length(3))
+        .chain([Constraint::Length(BUTTON_ROW_HEIGHT), Constraint::Min(0)]);
     let chunks = Layout::default()
         .direction(Direction::Vertical)
-        .constraints([
-            Constraint::Length(3), // Repo URL
-            Constraint::Length(3), // Branch
-            Constraint::Length(3), // Path in repo
-            Constraint::Length(3), // Local clone
-            Constraint::Length(3), // Auto-pull toggle
-            Constraint::Length(3), // Auto-push toggle
-            Constraint::Length(4), // Action buttons row (label + caption)
-            Constraint::Min(0),
-        ])
+        .constraints(constraints)
         .split(area);
-    for (i, label) in labels.iter().enumerate() {
+    for (i, label) in LABELS.iter().enumerate() {
         let active = editor.sync_field == i;
         let is_bool = sync_field_is_bool(i);
-        let value_spans = if is_bool {
-            toggle_spans(&editor.sync_inputs[i], theme)
+        let mut spans = vec![Span::styled(format!(" {label:<14} "), theme.text_dim)];
+        if is_bool {
+            spans.extend(toggle_spans(&editor.sync_inputs[i], theme));
         } else {
-            vec![Span::styled(
-                editor.sync_inputs[i].clone(),
-                Style::default().fg(theme.text),
-            )]
-        };
-        let mut spans = vec![Span::styled(
-            format!(" {label:<14} "),
-            Style::default().fg(theme.text_dim),
-        )];
-        spans.extend(value_spans);
-        if active && !is_bool {
-            spans.push(Span::styled("▌", Style::default().fg(theme.accent)));
+            spans.push(Span::styled(editor.sync_inputs[i].as_str(), theme.text));
+            if active {
+                spans.push(caret(theme));
+            }
         }
         // Boolean toggles get a thick border when focused so the
         // checkbox stands out from the text-input rows above.
@@ -1293,23 +1068,13 @@ fn draw_sync_editor(frame: &mut Frame<'_>, editor: &EditorState, theme: &Theme, 
             BorderType::Rounded
         };
         let para = Paragraph::new(Line::from(spans))
-            .block(
-                Block::default()
-                    .borders(Borders::ALL)
-                    .border_type(border_type)
-                    .border_style(Style::default().fg(if active {
-                        theme.primary
-                    } else {
-                        theme.border
-                    }))
-                    .style(Style::default().bg(theme.surface)),
-            )
-            .style(Style::default().bg(theme.surface))
+            .block(input_block(theme.input_border(active, false), theme).border_type(border_type))
+            .style(theme.panel())
             .wrap(Wrap { trim: true });
         frame.render_widget(para, chunks[i]);
     }
 
-    draw_sync_buttons(frame, editor, theme, chunks[6]);
+    draw_sync_buttons(frame, editor, theme, chunks[LABELS.len()]);
 }
 
 /// Render the row of action buttons under the sync form. Each button is
@@ -1325,7 +1090,7 @@ fn draw_sync_buttons(frame: &mut Frame<'_>, editor: &EditorState, theme: &Theme,
         ])
         .split(area);
 
-    let buttons: [(usize, &str, &str, ratatui::style::Color); 3] = [
+    let buttons: [(usize, &str, &str, Color); 3] = [
         (SYNC_BTN_TEST, "Test", "read-only probe", theme.accent),
         (
             SYNC_BTN_SYNC,
@@ -1342,19 +1107,14 @@ fn draw_sync_buttons(frame: &mut Frame<'_>, editor: &EditorState, theme: &Theme,
     ];
     for (i, (field, label, caption, accent)) in buttons.iter().enumerate() {
         let active = editor.sync_field == *field;
-        let (bg, fg, border) = if active {
-            (theme.surface_alt, theme.text, *accent)
-        } else {
-            (theme.surface, theme.text_dim, theme.border)
-        };
-        let mut text_style = Style::default().fg(fg);
-        if active {
-            text_style = text_style.add_modifier(Modifier::BOLD);
-        }
-        let caption_style = Style::default().fg(theme.text_muted).bg(bg);
+        let fill = theme.button_fill(active);
+        let border = if active { *accent } else { theme.border };
         let lines = vec![
-            Line::from(Span::styled(format!(" {label} "), text_style)),
-            Line::from(Span::styled(format!(" {caption} "), caption_style)),
+            Line::from(Span::styled(format!(" {label} "), theme.selectable(active))),
+            Line::from(Span::styled(
+                format!(" {caption} "),
+                fill.fg(theme.text_muted),
+            )),
         ];
         let body = Paragraph::new(lines)
             .alignment(Alignment::Center)
@@ -1366,10 +1126,10 @@ fn draw_sync_buttons(frame: &mut Frame<'_>, editor: &EditorState, theme: &Theme,
                     } else {
                         BorderType::Rounded
                     })
-                    .border_style(Style::default().fg(border).bg(bg))
-                    .style(Style::default().bg(bg)),
+                    .border_style(fill.fg(border))
+                    .style(fill),
             )
-            .style(Style::default().bg(bg));
+            .style(fill);
         frame.render_widget(body, button_chunks[i]);
     }
 }
@@ -1383,10 +1143,10 @@ fn toggle_spans(value: &str, theme: &Theme) -> Vec<Span<'static>> {
         _ => ("[○]", "Off (default)", theme.text_muted),
     };
     vec![
-        Span::styled(mark, Style::default().fg(color)),
+        Span::styled(mark, color),
         Span::raw(" "),
-        Span::styled(label.to_string(), Style::default().fg(color)),
-        Span::styled("   space to toggle", Style::default().fg(theme.text_muted)),
+        Span::styled(label.to_string(), color),
+        Span::styled("   space to toggle", theme.text_muted),
     ]
 }
 
@@ -1394,7 +1154,7 @@ fn toggle_spans(value: &str, theme: &Theme) -> Vec<Span<'static>> {
 mod tests {
     use std::path::PathBuf;
 
-    use ratatui::{backend::TestBackend, Terminal};
+    use ratatui::{Terminal, backend::TestBackend};
 
     use crate::{
         app::App,
@@ -1405,6 +1165,30 @@ mod tests {
         sync::SyncStatus,
         terminal::TerminalLauncher,
     };
+
+    #[test]
+    fn unsaved_footer_names_ctrl_s_in_every_view() {
+        let theme = super::Theme::midnight();
+        let mut editor = crate::editor::EditorState::from_config(&Config::default());
+        editor.dirty = true;
+        for view in [
+            EditorView::Menu,
+            EditorView::Categories,
+            EditorView::Hosts,
+            EditorView::CategoryForm,
+            EditorView::HostForm,
+            EditorView::Defaults,
+            EditorView::Sync,
+        ] {
+            editor.view = view;
+            let text: String = super::editor_footer(&editor, &theme)
+                .spans
+                .iter()
+                .map(|span| span.content.as_ref())
+                .collect();
+            assert!(text.contains("press Ctrl+S to save"), "{view:?}: {text}");
+        }
+    }
 
     #[test]
     fn icon_slot_is_empty_without_icon() {

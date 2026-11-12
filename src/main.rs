@@ -2,12 +2,12 @@ use std::{
     cmp::Reverse,
     io::{self, Stdout, Write},
     path::{Path, PathBuf},
-    process::{Command, Stdio},
+    process::{self, Command, ExitStatus, Stdio},
     thread,
     time::{Duration, Instant},
 };
 
-use anyhow::{anyhow, Context, Result};
+use anyhow::{Context, Result, anyhow};
 use clap::CommandFactory;
 use clap_complete::generate;
 use crossterm::{
@@ -17,10 +17,11 @@ use crossterm::{
         PopKeyboardEnhancementFlags, PushKeyboardEnhancementFlags,
     },
     execute,
-    terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
+    terminal::{EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode},
 };
-use fuzzy_matcher::{skim::SkimMatcherV2, FuzzyMatcher};
-use ratatui::{backend::CrosstermBackend, Terminal};
+use fuzzy_matcher::{FuzzyMatcher, skim::SkimMatcherV2};
+use ratatui::{Terminal, backend::CrosstermBackend};
+use serde::Serialize;
 
 mod app;
 mod cli;
@@ -29,6 +30,8 @@ mod connect;
 mod editor;
 mod favorites;
 mod history;
+mod input;
+mod storage;
 mod sync;
 mod terminal;
 mod theme;
@@ -38,21 +41,20 @@ use app::{App, Focus, Mode};
 use cli::{
     Cli, Command as CliCommand, ConfigCmd, ConnectArgs, HistoryArgs, ListArgs, ListFormat, SyncCmd,
 };
-use config::{default_config_path, Category, Config, Host, Inventory};
-use editor::{
-    sync_field_is_bool, sync_field_is_button, CategoryForm, EditorState, EditorView, HostForm,
-    PendingDelete, MENU_ITEMS, SYNC_AUTO_PULL, SYNC_AUTO_PUSH, SYNC_BTN_SAVE, SYNC_BTN_SYNC,
-    SYNC_BTN_TEST, SYNC_ELEMENT_COUNT, SYNC_REPO,
-};
+use config::{Category, Config, Host, Inventory, default_config_path};
+use editor::EditorView;
 use favorites::FavoritesStore;
-use history::{default_history_path, HistoryStore};
+use history::{HistoryEntry, HistoryStore, default_history_path};
+use input::Flow;
 use sync::{SyncContext, SyncStatus};
 use terminal::TerminalLauncher;
 
 fn main() -> Result<()> {
     let mut cli = Cli::parse_cli();
     let command = cli.command.take();
-    let config_path = resolve_config_path(&cli)?;
+    let config_path = cli
+        .config_path()
+        .map_or_else(default_config_path, Path::to_path_buf);
 
     match command {
         Some(CliCommand::Completions { shell }) => {
@@ -60,30 +62,29 @@ fn main() -> Result<()> {
             generate(shell, &mut cmd, "hoppr", &mut io::stdout());
             Ok(())
         }
-        Some(CliCommand::Config(sub)) => run_config_cmd(sub, &config_path),
-        Some(CliCommand::Sync(sub)) => run_sync_cmd(sub, &cli, &config_path),
+        Some(CliCommand::Config(sub)) => run_config_cmd(&sub, &config_path),
+        Some(CliCommand::Sync(sub)) => run_sync_cmd(sub, &config_path),
         Some(CliCommand::List(args)) => {
             let (cfg, _) = load_with_sync(&cli, &config_path)?;
-            run_list(args, &cfg)
+            run_list(&args, &cfg)
         }
         Some(CliCommand::Connect(args)) => {
             let (cfg, _) = load_with_sync(&cli, &config_path)?;
-            run_connect(args, &cfg)
+            let code = run_connect(args, &cfg)?;
+            if code != 0 {
+                process::exit(code);
+            }
+            Ok(())
         }
         Some(CliCommand::History(args)) => {
             let history = HistoryStore::load(&default_history_path());
-            run_history(args, &history)
+            run_history(&args, &history)
         }
         Some(CliCommand::Tui) | None => {
             let (cfg, status) = load_with_sync(&cli, &config_path)?;
             run_tui(cfg, config_path, status)
         }
     }
-}
-
-fn resolve_config_path(cli: &Cli) -> Result<PathBuf> {
-    let path = cli.config.clone().unwrap_or_else(default_config_path);
-    Ok(path)
 }
 
 fn load_with_sync(cli: &Cli, config_path: &Path) -> Result<(Config, SyncStatus)> {
@@ -95,28 +96,27 @@ fn load_with_sync(cli: &Cli, config_path: &Path) -> Result<(Config, SyncStatus)>
     };
 
     let want_sync = !cli.no_sync && (cli.sync || config.sync_enabled());
-    if want_sync {
-        if let Some(sync_cfg) = config.sync.as_ref() {
-            if let Some(ctx) = SyncContext::from(sync_cfg) {
-                match sync::ensure_repo(&ctx) {
-                    Ok(s) => {
-                        status = s;
-                        let tracked = ctx.tracked_path();
-                        if tracked.exists() {
-                            match Inventory::load_from_path(&tracked) {
-                                Ok(inv) => config.apply_inventory(inv),
-                                Err(err) => {
-                                    eprintln!("hoppr: shared inventory unreadable — {err:#}");
-                                    status = SyncStatus::Failed;
-                                }
-                            }
+    if want_sync
+        && let Some(sync_cfg) = config.sync.as_ref()
+        && let Some(ctx) = SyncContext::from(sync_cfg)
+    {
+        match sync::ensure_repo(&ctx) {
+            Ok(s) => {
+                status = s;
+                let tracked = ctx.tracked_path();
+                if tracked.exists() {
+                    match Inventory::load_from_path(&tracked) {
+                        Ok(inv) => config.apply_inventory(inv),
+                        Err(err) => {
+                            eprintln!("hoppr: shared inventory unreadable — {err:#}");
+                            status = SyncStatus::Failed;
                         }
                     }
-                    Err(err) => {
-                        eprintln!("hoppr: sync failed — {err:#}");
-                        status = SyncStatus::Failed;
-                    }
                 }
+            }
+            Err(err) => {
+                eprintln!("hoppr: sync failed — {err:#}");
+                status = SyncStatus::Failed;
             }
         }
     }
@@ -142,7 +142,7 @@ fn run_tui(config: Config, config_path: PathBuf, status: SyncStatus) -> Result<(
         app.sync_status,
         SyncStatus::UpToDate | SyncStatus::Pulled | SyncStatus::PulledWithChanges
     ) {
-        app.record_sync(probe_sync_dirty(&app.config));
+        app.record_sync(sync::probe_dirty(app.config.sync.as_ref()));
     }
 
     let mut terminal = setup_terminal()?;
@@ -151,18 +151,6 @@ fn run_tui(config: Config, config_path: PathBuf, status: SyncStatus) -> Result<(
     run_result?;
     restore_result?;
     Ok(())
-}
-
-/// Cheap (local-only) probe of the synced clone. Returns `None` when
-/// sync isn't configured or the clone isn't a usable git repo;
-/// otherwise the bool reflects `git status` — true means there are
-/// uncommitted changes.
-fn probe_sync_dirty(config: &Config) -> Option<bool> {
-    let ctx = SyncContext::from(config.sync.as_ref()?)?;
-    if !sync::local_repo_ready(&ctx) {
-        return None;
-    }
-    sync::has_uncommitted_changes(&ctx).ok()
 }
 
 fn setup_terminal() -> Result<Terminal<CrosstermBackend<Stdout>>> {
@@ -211,11 +199,9 @@ fn event_loop(terminal: &mut Terminal<CrosstermBackend<Stdout>>, app: &mut App) 
         if key.kind != KeyEventKind::Press {
             continue;
         }
-        let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
-
         if app.show_help {
             match key.code {
-                KeyCode::Char('?') | KeyCode::F(1) | KeyCode::Esc | KeyCode::Char('q') => {
+                KeyCode::Char('?' | 'q') | KeyCode::F(1) | KeyCode::Esc => {
                     app.show_help = false;
                 }
                 _ => {}
@@ -223,78 +209,133 @@ fn event_loop(terminal: &mut Terminal<CrosstermBackend<Stdout>>, app: &mut App) 
             continue;
         }
 
-        if matches!(key.code, KeyCode::Char('?') | KeyCode::F(1)) && help_toggle_allowed(app) {
+        if is_help_key(key.code, key.modifiers) && help_toggle_allowed(app) {
             app.toggle_help();
             continue;
         }
 
-        match app.mode {
-            Mode::Browse => match key.code {
-                KeyCode::Char('c') if ctrl => return Ok(()),
-                KeyCode::Esc | KeyCode::Char('q') if app.focus != Focus::Search => return Ok(()),
-                KeyCode::Esc if app.focus == Focus::Search => app.clear_search_focus_hosts(),
-                KeyCode::Tab => app.toggle_focus(),
-                KeyCode::Char('/') => {
-                    // `/` always starts a fresh search: when re-entering from
-                    // another focus with a leftover query, wipe it first so
-                    // keystrokes don't append to stale text.
-                    if app.focus != Focus::Search && !app.search_query.is_empty() {
-                        app.clear_search_query();
-                    }
-                    app.focus_search();
-                }
-                KeyCode::Char('u') if ctrl && app.focus == Focus::Search => {
-                    app.clear_search_query();
-                }
-                KeyCode::Char('e') if app.focus != Focus::Search => app.enter_edit_mode(),
-                KeyCode::Up | KeyCode::Char('k') if app.focus != Focus::Search => app.previous(),
-                KeyCode::Down | KeyCode::Char('j') if app.focus != Focus::Search => app.next(),
-                KeyCode::Backspace if app.focus == Focus::Search => app.pop_search_char(),
-                KeyCode::Enter if app.focus == Focus::Search => app.clear_search_focus_hosts(),
-                // Global search toggle (Ctrl+A) — only meaningful in search mode
-                KeyCode::Char('a') if ctrl => {
-                    app.search_all = !app.search_all;
-                    app.hosts_state.select(Some(0));
-                    let label = if app.search_all {
-                        "Global search: all categories"
-                    } else {
-                        "Search: current category"
-                    };
-                    app.set_status(label);
-                }
-                KeyCode::Char(c) if app.focus == Focus::Search => app.append_search_char(c),
-                // Favorite toggle
-                KeyCode::Char('f') if app.focus == Focus::Hosts => {
-                    let host_cat = app
-                        .selected_host_with_category()
-                        .map(|(h, c)| (h.name.clone(), c.to_owned()));
-                    if let Some((host_name, cat_name)) = host_cat {
-                        let starred = app.favorites.toggle(&cat_name, &host_name);
-                        let _ = app.favorites.save();
-                        if starred {
-                            app.set_status_success(format!("★  {host_name} starred"));
-                        } else {
-                            app.set_status(format!("{host_name} removed from favorites"));
-                        }
-                        app.ensure_valid_selection();
-                    }
-                }
-                // Open in new terminal tab
-                KeyCode::Char('t') if app.focus == Focus::Hosts && app.terminal.is_available() => {
-                    ssh_spawn(app)?;
-                }
-                KeyCode::Enter if app.focus == Focus::Hosts => {
-                    ssh_handoff(terminal, app)?;
-                }
-                _ => {}
-            },
+        let flow = match app.mode {
+            Mode::Browse => handle_browse_key(terminal, app, key.code, key.modifiers)?,
             Mode::Edit => {
-                if handle_editor_event(app, key.code, ctrl)? {
-                    return Ok(());
-                }
+                let mut redraw = |app: &mut App| -> Result<()> {
+                    terminal.draw(|frame| ui::draw(frame, app))?;
+                    Ok(())
+                };
+                input::handle_editor_key(app, key.code, key.modifiers, &mut redraw)?
             }
+        };
+        if flow == Flow::Quit {
+            return Ok(());
         }
     }
+}
+
+fn handle_browse_key(
+    terminal: &mut Terminal<CrosstermBackend<Stdout>>,
+    app: &mut App,
+    code: KeyCode,
+    modifiers: KeyModifiers,
+) -> Result<Flow> {
+    match browse_key(app, code, modifiers) {
+        BrowseStep::Quit => return Ok(Flow::Quit),
+        BrowseStep::Connect => ssh_handoff(terminal, app)?,
+        BrowseStep::Handled => {}
+    }
+    Ok(Flow::Continue)
+}
+
+/// What a browse-mode key press leaves for the caller to do.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum BrowseStep {
+    Handled,
+    Quit,
+    Connect,
+}
+
+/// The letter bindings are plain keys: `plain` is false for a letter held
+/// with Ctrl or Alt, so Ctrl+E does not open the editor and Alt+Q does not
+/// quit. The Ctrl chords in turn need Ctrl without Alt, because Ctrl+Alt is
+/// how AltGr text arrives (see [`input::typed_char`]).
+fn browse_key(app: &mut App, code: KeyCode, modifiers: KeyModifiers) -> BrowseStep {
+    let ctrl = modifiers.contains(KeyModifiers::CONTROL);
+    let ctrl_only = ctrl && !modifiers.contains(KeyModifiers::ALT);
+    let plain = input::typed_char(code, modifiers).is_some();
+    let searching = app.focus == Focus::Search;
+    match code {
+        KeyCode::Char('c') if ctrl_only => return BrowseStep::Quit,
+        KeyCode::Esc if !searching => return BrowseStep::Quit,
+        KeyCode::Char('q') if plain && !searching => return BrowseStep::Quit,
+        KeyCode::Esc | KeyCode::Enter if searching => {
+            app.clear_search_focus_hosts();
+        }
+        KeyCode::Tab => app.toggle_focus(),
+        KeyCode::Char('/') if plain && !searching => {
+            // `/` always starts a fresh search: a leftover query from an
+            // earlier search is wiped so keystrokes don't append to stale
+            // text. Inside the search input it is an ordinary character,
+            // because category and host names may contain it.
+            if !app.search_query.is_empty() {
+                app.clear_search_query();
+            }
+            app.focus_search();
+        }
+        KeyCode::Char('u') if ctrl_only && searching => {
+            app.clear_search_query();
+        }
+        KeyCode::Char('e') if plain && !searching => app.enter_edit_mode(),
+        KeyCode::Up if !searching => app.previous(),
+        KeyCode::Char('k') if plain && !searching => app.previous(),
+        KeyCode::Down if !searching => app.next(),
+        KeyCode::Char('j') if plain && !searching => app.next(),
+        KeyCode::Backspace if searching => app.pop_search_char(),
+        KeyCode::Char('a') if ctrl_only => toggle_search_scope(app),
+        KeyCode::Char(_) if searching => type_into_search(app, code, modifiers),
+        KeyCode::Char('f') if plain && app.focus == Focus::Hosts => toggle_favorite(app),
+        KeyCode::Char('t') if plain && app.focus == Focus::Hosts && app.terminal.is_available() => {
+            ssh_spawn(app);
+        }
+        KeyCode::Enter if app.focus == Focus::Hosts => return BrowseStep::Connect,
+        _ => {}
+    }
+    BrowseStep::Handled
+}
+
+fn type_into_search(app: &mut App, code: KeyCode, modifiers: KeyModifiers) {
+    if let Some(ch) = input::typed_char(code, modifiers) {
+        app.append_search_char(ch);
+    }
+}
+
+fn toggle_search_scope(app: &mut App) {
+    app.search_all = !app.search_all;
+    app.hosts_state.select(Some(0));
+    let label = if app.search_all {
+        "Global search: all categories"
+    } else {
+        "Search: current category"
+    };
+    app.set_status(label);
+}
+
+fn toggle_favorite(app: &mut App) {
+    let host_cat = app
+        .selected_host_with_category()
+        .map(|(h, c)| (h.name.clone(), c.to_owned()));
+    let Some((host_name, cat_name)) = host_cat else {
+        return;
+    };
+    let starred = app.favorites.toggle(&cat_name, &host_name);
+    let _ = app.favorites.save();
+    if starred {
+        app.set_status_success(format!("★  {host_name} starred"));
+    } else {
+        app.set_status(format!("{host_name} removed from favorites"));
+    }
+    app.ensure_valid_selection();
+}
+
+fn is_help_key(code: KeyCode, modifiers: KeyModifiers) -> bool {
+    code == KeyCode::F(1) || input::typed_char(code, modifiers) == Some('?')
 }
 
 /// `?` and F1 must NOT toggle the help overlay when the focused widget
@@ -306,7 +347,7 @@ fn help_toggle_allowed(app: &App) -> bool {
         Mode::Browse => app.focus != Focus::Search,
         Mode::Edit => matches!(
             app.editor.as_ref().map(|e| e.view),
-            Some(EditorView::Menu) | Some(EditorView::Categories) | Some(EditorView::Hosts)
+            Some(EditorView::Menu | EditorView::Categories | EditorView::Hosts)
         ),
     }
 }
@@ -319,12 +360,36 @@ fn ssh_handoff(terminal: &mut Terminal<CrosstermBackend<Stdout>>, app: &mut App)
         return Ok(());
     };
 
-    app.history.record(&host.name, &host.ip, &category_name);
-    let _ = app.history.save();
-
     let mut command = connect::build_command(&app.config, &host);
     let target = connection_target_label(&app.config, &host);
 
+    match suspend_tui(terminal, || run_session(&mut command, &target))? {
+        Ok(()) => {
+            app.history.record(&host.name, &host.ip, &category_name);
+            let _ = app.history.save();
+        }
+        Err(err) => app.set_status_error(format!("{err:#}")),
+    }
+    Ok(())
+}
+
+/// Hand the real terminal to `session`, then take it back.
+///
+/// Re-entering raw mode and the alternate screen is not conditional on
+/// anything `session` does or on how far leaving got, so the event loop
+/// never resumes on a cooked, main-screen terminal.
+fn suspend_tui<T>(
+    terminal: &mut Terminal<CrosstermBackend<Stdout>>,
+    session: impl FnOnce() -> T,
+) -> Result<T> {
+    let outcome = leave_tui().map(|()| session());
+    let resumed = resume_tui(terminal);
+    let outcome = outcome?;
+    resumed?;
+    Ok(outcome)
+}
+
+fn leave_tui() -> Result<()> {
     disable_raw_mode()?;
     // ratatui hides the cursor while rendering; re-show it so the inherited
     // ssh session starts with a visible cursor instead of inheriting DECTCEM
@@ -337,19 +402,30 @@ fn ssh_handoff(terminal: &mut Terminal<CrosstermBackend<Stdout>>, app: &mut App)
         Show,
         SetCursorStyle::DefaultUserShape
     )?;
+    Ok(())
+}
 
+fn resume_tui(terminal: &mut Terminal<CrosstermBackend<Stdout>>) -> Result<()> {
+    enable_raw_mode()?;
+    execute!(io::stdout(), EnterAlternateScreen)?;
+    terminal.clear()?;
+    Ok(())
+}
+
+/// Run `command` on the inherited terminal until it exits. The error names
+/// the program, since a missing `ssh`/`mosh` binary is the usual cause.
+fn run_session(command: &mut Command, target: &str) -> Result<()> {
+    let program = command.get_program().to_string_lossy().into_owned();
     let mut child = command
         .stdin(Stdio::inherit())
         .stdout(Stdio::inherit())
         .stderr(Stdio::inherit())
         .spawn()
-        .with_context(|| format!("failed to launch ssh to {target}"))?;
-    show_connecting_spinner(&target, &mut child);
-    let _ = child.wait()?;
-
-    enable_raw_mode()?;
-    execute!(io::stdout(), EnterAlternateScreen)?;
-    terminal.clear()?;
+        .with_context(|| format!("Could not start {program}"))?;
+    show_connecting_spinner(target, &mut child);
+    child
+        .wait()
+        .with_context(|| format!("Lost track of {program}"))?;
     Ok(())
 }
 
@@ -403,12 +479,12 @@ fn connection_target_label(config: &Config, host: &Host) -> String {
 }
 
 /// Open the connection in a new terminal window without interrupting the TUI.
-fn ssh_spawn(app: &mut App) -> Result<()> {
+fn ssh_spawn(app: &mut App) {
     let host_cat = app
         .selected_host_with_category()
         .map(|(h, c)| (h.clone(), c.to_owned()));
     let Some((host, category_name)) = host_cat else {
-        return Ok(());
+        return;
     };
 
     let command = connect::build_command(&app.config, &host);
@@ -430,704 +506,18 @@ fn ssh_spawn(app: &mut App) -> Result<()> {
             app.set_status_error(format!("Terminal launch failed: {err:#}"));
         }
     }
-    Ok(())
-}
-
-/// Move the categories selection by `delta` steps over the *visible*
-/// (filtered) subset, then remap the resulting position back to the
-/// original `categories_index`. Without the remap a delete/edit would
-/// target the wrong row whenever a filter is active.
-fn move_visible_category(editor: &mut EditorState, config: &Config, delta: i32) {
-    let visible = editor.visible_categories(config);
-    if visible.is_empty() {
-        return;
-    }
-    let current_pos = visible
-        .iter()
-        .position(|(i, _)| *i == editor.categories_index)
-        .unwrap_or(0);
-    let len = visible.len() as i32;
-    let next = ((current_pos as i32 + delta).rem_euclid(len)) as usize;
-    editor.categories_index = visible[next].0;
-}
-
-/// Same as `move_visible_category` but for hosts inside the currently
-/// selected category.
-fn move_visible_host(editor: &mut EditorState, config: &Config, delta: i32) {
-    let visible = editor.visible_hosts(config);
-    if visible.is_empty() {
-        return;
-    }
-    let current_pos = visible
-        .iter()
-        .position(|(i, _)| *i == editor.hosts_index)
-        .unwrap_or(0);
-    let len = visible.len() as i32;
-    let next = ((current_pos as i32 + delta).rem_euclid(len)) as usize;
-    editor.hosts_index = visible[next].0;
-}
-
-fn handle_category_filter_input(editor: &mut EditorState, config: &Config, code: KeyCode) {
-    match code {
-        KeyCode::Esc => {
-            editor.filter_focus = false;
-        }
-        KeyCode::Enter => {
-            editor.filter_focus = false;
-            if let Some((first_index, _)) = editor.visible_categories(config).first() {
-                editor.categories_index = *first_index;
-            }
-        }
-        KeyCode::Backspace => {
-            if let Some(buf) = editor.category_filter.as_mut() {
-                buf.pop();
-            }
-        }
-        KeyCode::Char(c) => {
-            editor
-                .category_filter
-                .get_or_insert_with(String::new)
-                .push(c);
-            // Keep the highlight on something visible while the query narrows.
-            if let Some((first_index, _)) = editor.visible_categories(config).first() {
-                editor.categories_index = *first_index;
-            }
-        }
-        _ => {}
-    }
-}
-
-fn handle_host_filter_input(editor: &mut EditorState, config: &Config, code: KeyCode) {
-    match code {
-        KeyCode::Esc => {
-            editor.filter_focus = false;
-        }
-        KeyCode::Enter => {
-            editor.filter_focus = false;
-            if let Some((first_index, _)) = editor.visible_hosts(config).first() {
-                editor.hosts_index = *first_index;
-            }
-        }
-        KeyCode::Backspace => {
-            if let Some(buf) = editor.host_filter.as_mut() {
-                buf.pop();
-            }
-        }
-        KeyCode::Char(c) => {
-            editor.host_filter.get_or_insert_with(String::new).push(c);
-            if let Some((first_index, _)) = editor.visible_hosts(config).first() {
-                editor.hosts_index = *first_index;
-            }
-        }
-        _ => {}
-    }
-}
-
-// Returns Ok(true) when the caller should quit.
-fn handle_editor_event(app: &mut App, code: KeyCode, ctrl: bool) -> Result<bool> {
-    if ctrl && matches!(code, KeyCode::Char('c')) {
-        return Ok(true);
-    }
-
-    let editor = app.editor.as_mut().expect("editor state in edit mode");
-    editor.clamp(&app.config);
-
-    // The unsaved-changes prompt owns the whole event loop until the user
-    // resolves it — otherwise navigation keys could nudge the editor while
-    // the modal is on screen.
-    if editor.pending_exit {
-        match code {
-            KeyCode::Char('s') => {
-                save_config(app)?;
-                app.exit_edit_mode();
-            }
-            KeyCode::Char('d') => {
-                // If the config has never been saved, reload fails and we
-                // simply drop the in-memory edits via exit_edit_mode below.
-                if let Ok(cfg) = Config::load_from_path(&app.config_path) {
-                    app.config = cfg;
-                }
-                if let Some(editor) = app.editor.as_mut() {
-                    editor.dirty = false;
-                }
-                app.exit_edit_mode();
-            }
-            KeyCode::Char('c') | KeyCode::Esc => {
-                editor.pending_exit = false;
-            }
-            _ => {}
-        }
-        return Ok(false);
-    }
-
-    // Resolving a pending delete must short-circuit normal key handling so
-    // that, for example, "j" doesn't both cancel the prompt and move the
-    // selection in the same tick.
-    if editor.pending_delete.is_some() {
-        match code {
-            KeyCode::Char('y') => {
-                if editor.confirm_delete(&mut app.config) {
-                    let msg = match editor.view {
-                        EditorView::Categories => "Category removed",
-                        EditorView::Hosts => "Host removed",
-                        _ => "Removed",
-                    };
-                    editor.flash(msg);
-                } else {
-                    editor.flash("Delete cancelled");
-                }
-            }
-            _ => {
-                editor.cancel_delete();
-                editor.flash("Delete cancelled");
-            }
-        }
-        return Ok(false);
-    }
-
-    match editor.view {
-        EditorView::Menu => match code {
-            KeyCode::Esc => {
-                if editor.dirty {
-                    editor.pending_exit = true;
-                } else {
-                    app.exit_edit_mode();
-                }
-            }
-            KeyCode::Up | KeyCode::Char('k') => {
-                editor.menu_index = (editor.menu_index + MENU_ITEMS.len() - 1) % MENU_ITEMS.len();
-            }
-            KeyCode::Down | KeyCode::Char('j') => {
-                editor.menu_index = (editor.menu_index + 1) % MENU_ITEMS.len();
-            }
-            KeyCode::Enter => editor.view = MENU_ITEMS[editor.menu_index].1,
-            KeyCode::Char('s') if ctrl && editor.dirty => save_config(app)?,
-            _ => {}
-        },
-        EditorView::Categories => {
-            if editor.filter_focus {
-                handle_category_filter_input(editor, &app.config, code);
-            } else {
-                match code {
-                    KeyCode::Esc => {
-                        // Second Esc on a non-focused, populated filter clears it,
-                        // freeing the user from a hidden narrowing they can't see.
-                        if editor.category_filter.is_some() {
-                            editor.category_filter = None;
-                        } else {
-                            editor.view = EditorView::Menu;
-                        }
-                    }
-                    KeyCode::Char('/') => {
-                        editor.filter_focus = true;
-                        if editor.category_filter.is_none() {
-                            editor.category_filter = Some(String::new());
-                        }
-                    }
-                    KeyCode::Up | KeyCode::Char('k') => {
-                        move_visible_category(editor, &app.config, -1);
-                    }
-                    KeyCode::Down | KeyCode::Char('j') => {
-                        move_visible_category(editor, &app.config, 1);
-                    }
-                    KeyCode::Char('a') => {
-                        editor.category_form = Some(CategoryForm::new_create());
-                        editor.view = EditorView::CategoryForm;
-                    }
-                    KeyCode::Char('r') | KeyCode::Enter => {
-                        if let Some(cat) = app.config.categories.get(editor.categories_index) {
-                            editor.category_form =
-                                Some(CategoryForm::new_edit(editor.categories_index, cat));
-                            editor.view = EditorView::CategoryForm;
-                        }
-                    }
-                    KeyCode::Char('d') if !app.config.categories.is_empty() => {
-                        if let Some(cat) = app.config.categories.get(editor.categories_index) {
-                            editor.request_delete(PendingDelete::Category {
-                                name: cat.name.clone(),
-                            });
-                        }
-                    }
-                    KeyCode::Char('s') if ctrl && editor.dirty => save_config(app)?,
-                    _ => {}
-                }
-            }
-        }
-        EditorView::Hosts => {
-            if editor.filter_focus {
-                handle_host_filter_input(editor, &app.config, code);
-            } else {
-                match code {
-                    KeyCode::Esc => {
-                        if editor.host_filter.is_some() {
-                            editor.host_filter = None;
-                        } else {
-                            editor.view = EditorView::Menu;
-                        }
-                    }
-                    KeyCode::Char('/') => {
-                        editor.filter_focus = true;
-                        if editor.host_filter.is_none() {
-                            editor.host_filter = Some(String::new());
-                        }
-                    }
-                    KeyCode::Tab => {
-                        let len = app.config.categories.len();
-                        if len > 0 {
-                            editor.categories_index = (editor.categories_index + 1) % len;
-                            editor.hosts_index = 0;
-                            // Filter is scoped to the visible category; switching
-                            // would otherwise leave a stale narrowing in place.
-                            editor.host_filter = None;
-                        }
-                    }
-                    KeyCode::BackTab => {
-                        let len = app.config.categories.len();
-                        if len > 0 {
-                            editor.categories_index = (editor.categories_index + len - 1) % len;
-                            editor.hosts_index = 0;
-                            editor.host_filter = None;
-                        }
-                    }
-                    KeyCode::Up | KeyCode::Char('k') => {
-                        move_visible_host(editor, &app.config, -1);
-                    }
-                    KeyCode::Down | KeyCode::Char('j') => {
-                        move_visible_host(editor, &app.config, 1);
-                    }
-                    KeyCode::Char('a') if !app.config.categories.is_empty() => {
-                        editor.host_form = Some(HostForm::new_create(editor.categories_index));
-                        editor.view = EditorView::HostForm;
-                    }
-                    KeyCode::Char('r') | KeyCode::Enter => {
-                        if let Some(host) = app
-                            .config
-                            .categories
-                            .get(editor.categories_index)
-                            .and_then(|c| c.hosts.get(editor.hosts_index))
-                        {
-                            editor.host_form = Some(HostForm::new_edit(
-                                editor.categories_index,
-                                editor.hosts_index,
-                                host,
-                            ));
-                            editor.view = EditorView::HostForm;
-                        }
-                    }
-                    KeyCode::Char('d') => {
-                        if let Some(cat) = app.config.categories.get(editor.categories_index) {
-                            if let Some(host) = cat.hosts.get(editor.hosts_index) {
-                                editor.request_delete(PendingDelete::Host {
-                                    category_name: cat.name.clone(),
-                                    host_name: host.name.clone(),
-                                });
-                            }
-                        }
-                    }
-                    KeyCode::Char('s') if ctrl && editor.dirty => save_config(app)?,
-                    _ => {}
-                }
-            }
-        }
-        EditorView::CategoryForm => {
-            let form_event_result = handle_category_form(editor, &mut app.config, code);
-            if let Some(msg) = form_event_result {
-                editor.flash(msg);
-            }
-        }
-        EditorView::HostForm => {
-            let form_event_result = handle_host_form(editor, &mut app.config, code);
-            if let Some(msg) = form_event_result {
-                editor.flash(msg);
-            }
-        }
-        EditorView::Defaults => match code {
-            KeyCode::Esc => editor.view = EditorView::Menu,
-            KeyCode::Tab | KeyCode::Down => {
-                editor.defaults_field = (editor.defaults_field + 1) % 4;
-            }
-            KeyCode::BackTab | KeyCode::Up => {
-                editor.defaults_field = (editor.defaults_field + 4 - 1) % 4;
-            }
-            KeyCode::Backspace => {
-                editor.defaults_inputs[editor.defaults_field].pop();
-            }
-            KeyCode::Char('s') if ctrl => save_config(app)?,
-            KeyCode::Enter => match editor.apply_defaults(&mut app.config) {
-                Ok(()) => editor.flash("Defaults applied · Ctrl+s to save"),
-                Err(err) => editor.flash(err),
-            },
-            KeyCode::Char(c) => editor.defaults_inputs[editor.defaults_field].push(c),
-            _ => {}
-        },
-        EditorView::Sync => match code {
-            KeyCode::Esc => editor.view = EditorView::Menu,
-            KeyCode::Tab | KeyCode::Down => {
-                editor.sync_field = (editor.sync_field + 1) % SYNC_ELEMENT_COUNT;
-            }
-            KeyCode::BackTab | KeyCode::Up => {
-                editor.sync_field =
-                    (editor.sync_field + SYNC_ELEMENT_COUNT - 1) % SYNC_ELEMENT_COUNT;
-            }
-            KeyCode::Backspace
-                if !sync_field_is_bool(editor.sync_field)
-                    && !sync_field_is_button(editor.sync_field) =>
-            {
-                editor.sync_inputs[editor.sync_field].pop();
-            }
-            // Universal save shortcut — kept alongside the [Save & push] button.
-            KeyCode::Char('s') if ctrl => save_config(app)?,
-            // Space toggles boolean fields.
-            KeyCode::Char(' ') if sync_field_is_bool(editor.sync_field) => {
-                let field = editor.sync_field;
-                let new = editor.toggle_sync_bool(field).to_string();
-                editor.dirty = true;
-                editor.flash(format!(
-                    "{} = {new}",
-                    if field == SYNC_AUTO_PULL {
-                        "auto_pull"
-                    } else {
-                        "auto_push"
-                    }
-                ));
-            }
-            KeyCode::Enter => match editor.sync_field {
-                SYNC_BTN_TEST => sync_test_connection(app),
-                SYNC_BTN_SYNC => {
-                    if sync_apply_form(app).is_ok() {
-                        sync_pull_now(app);
-                    }
-                }
-                SYNC_BTN_SAVE => {
-                    if sync_apply_form(app).is_ok() {
-                        save_config(app)?;
-                    }
-                }
-                SYNC_AUTO_PULL | SYNC_AUTO_PUSH => {
-                    let field = editor.sync_field;
-                    let new = editor.toggle_sync_bool(field).to_string();
-                    editor.dirty = true;
-                    editor.flash(format!(
-                        "{} = {new}",
-                        if field == SYNC_AUTO_PULL {
-                            "auto_pull"
-                        } else {
-                            "auto_push"
-                        }
-                    ));
-                }
-                // Text fields: Enter applies the form so users who don't
-                // notice the buttons still have a workable shortcut.
-                _ => match editor.apply_sync(&mut app.config) {
-                    Ok(()) => {
-                        editor.flash("Sync applied");
-                        sync_clone_if_missing(app);
-                    }
-                    Err(err) => editor.flash(err),
-                },
-            },
-            KeyCode::Char(c)
-                if !sync_field_is_bool(editor.sync_field)
-                    && !sync_field_is_button(editor.sync_field) =>
-            {
-                editor.sync_inputs[editor.sync_field].push(c);
-            }
-            _ => {}
-        },
-    }
-    Ok(false)
-}
-
-fn handle_category_form(
-    editor: &mut EditorState,
-    config: &mut Config,
-    code: KeyCode,
-) -> Option<String> {
-    let Some(form) = editor.category_form.as_mut() else {
-        editor.view = EditorView::Categories;
-        return None;
-    };
-    match code {
-        KeyCode::Esc => {
-            editor.category_form = None;
-            editor.view = EditorView::Categories;
-            None
-        }
-        KeyCode::Tab | KeyCode::Down => {
-            form.next_field();
-            None
-        }
-        KeyCode::BackTab | KeyCode::Up => {
-            form.prev_field();
-            None
-        }
-        KeyCode::Backspace => {
-            form.pop_char();
-            None
-        }
-        KeyCode::Enter => {
-            form.submitted_once = true;
-            let mut cat = if form.mode_create {
-                Category::default()
-            } else {
-                config
-                    .categories
-                    .get(form.category_index.unwrap_or(0))
-                    .cloned()
-                    .unwrap_or_default()
-            };
-            if let Err(err) = form.apply(&mut cat) {
-                return Some(err);
-            }
-            if form.mode_create {
-                config.categories.push(cat);
-            } else if let Some(i) = form.category_index {
-                if let Some(slot) = config.categories.get_mut(i) {
-                    *slot = cat;
-                }
-            }
-            let created = form.mode_create;
-            editor.dirty = true;
-            editor.category_form = None;
-            editor.view = EditorView::Categories;
-            Some(if created {
-                "Category added · s to save".into()
-            } else {
-                "Category updated · s to save".into()
-            })
-        }
-        KeyCode::Char(c) => {
-            form.push_char(c);
-            None
-        }
-        _ => None,
-    }
-}
-
-fn handle_host_form(
-    editor: &mut EditorState,
-    config: &mut Config,
-    code: KeyCode,
-) -> Option<String> {
-    let Some(form) = editor.host_form.as_mut() else {
-        editor.view = EditorView::Hosts;
-        return None;
-    };
-    match code {
-        KeyCode::Esc => {
-            editor.host_form = None;
-            editor.view = EditorView::Hosts;
-            None
-        }
-        KeyCode::Tab | KeyCode::Down => {
-            form.next_field();
-            None
-        }
-        KeyCode::BackTab | KeyCode::Up => {
-            form.prev_field();
-            None
-        }
-        KeyCode::Backspace => {
-            form.pop_char();
-            None
-        }
-        KeyCode::Enter => {
-            form.submitted_once = true;
-            let host = match form.to_host() {
-                Ok(h) => h,
-                Err(err) => return Some(err),
-            };
-            if form.mode_create {
-                if let Some(cat) = config.categories.get_mut(form.category_index) {
-                    cat.hosts.push(host);
-                }
-            } else if let (Some(cat), Some(idx)) = (
-                config.categories.get_mut(form.category_index),
-                form.host_index,
-            ) {
-                if let Some(slot) = cat.hosts.get_mut(idx) {
-                    *slot = host;
-                }
-            }
-            let created = form.mode_create;
-            editor.dirty = true;
-            editor.host_form = None;
-            editor.view = EditorView::Hosts;
-            Some(if created {
-                "Host added · s to save".into()
-            } else {
-                "Host updated · s to save".into()
-            })
-        }
-        KeyCode::Char(c) => {
-            form.push_char(c);
-            None
-        }
-        _ => None,
-    }
-}
-
-/// Build a `SyncConfig` from the live form inputs and persist it onto
-/// `app.config`. Surfaces the validation error through the editor's
-/// flash line; returns `Err(())` so the caller (button handler) can
-/// short-circuit and not move on to the network step.
-fn sync_apply_form(app: &mut App) -> Result<(), ()> {
-    let editor = app.editor.as_mut().expect("editor state in edit mode");
-    match editor.apply_sync(&mut app.config) {
-        Ok(()) => Ok(()),
-        Err(err) => {
-            editor.flash(err);
-            Err(())
-        }
-    }
-}
-
-/// Probe the repo URL currently entered in the sync form.
-///
-/// Uses the URL from the form rather than the persisted config so the user
-/// can verify it before committing the change. Blocks the UI thread — fine
-/// because the libgit2 handshake is short.
-fn sync_test_connection(app: &mut App) {
-    let Some(editor) = app.editor.as_mut() else {
-        return;
-    };
-    let url = editor.sync_inputs[SYNC_REPO].trim().to_string();
-    if url.is_empty() {
-        editor.flash("Set a repo URL first");
-        return;
-    }
-    editor.flash(format!("Reaching {url} …"));
-    match sync::test_connection(&url) {
-        Ok(()) => editor.flash("Connection OK"),
-        Err(err) => editor.flash(format!("Connection failed: {err:#}")),
-    }
-}
-
-/// Run a sync (clone or fast-forward pull) using the persisted config.
-///
-/// Requires the form to have been applied with Enter first, so the new
-/// settings are visible to [`SyncContext::from`]. Blocks the UI thread.
-fn sync_pull_now(app: &mut App) {
-    let Some(sync_cfg) = app.config.sync.as_ref() else {
-        if let Some(editor) = app.editor.as_mut() {
-            editor.flash("Apply (↩) the form before syncing");
-        }
-        return;
-    };
-    let Some(ctx) = SyncContext::from(sync_cfg) else {
-        if let Some(editor) = app.editor.as_mut() {
-            editor.flash("Set a repo URL first");
-        }
-        return;
-    };
-    if let Some(editor) = app.editor.as_mut() {
-        editor.flash("Syncing …");
-    }
-    match sync::ensure_repo(&ctx) {
-        Ok(status) => {
-            app.sync_status = status;
-            let tracked = ctx.tracked_path();
-            if tracked.exists() {
-                if let Ok(inv) = Inventory::load_from_path(&tracked) {
-                    app.config.apply_inventory(inv);
-                }
-            }
-            app.record_sync(sync::has_uncommitted_changes(&ctx).ok());
-            if let Some(editor) = app.editor.as_mut() {
-                editor.flash(format!("Sync · {}", status.label()));
-            }
-        }
-        Err(err) => {
-            app.sync_status = SyncStatus::Failed;
-            if let Some(editor) = app.editor.as_mut() {
-                editor.flash(format!("Sync failed: {err:#}"));
-            }
-        }
-    }
-}
-
-/// First-time bootstrap: clone the configured repo if the local copy is
-/// missing (or stuck in a half-cloned state). Called right after the
-/// sync form is applied so a fresh setup gets the repo on disk without
-/// the user having to leave the editor.
-fn sync_clone_if_missing(app: &mut App) {
-    let Some(sync_cfg) = app.config.sync.as_ref() else {
-        return;
-    };
-    let Some(ctx) = SyncContext::from(sync_cfg) else {
-        return;
-    };
-    if sync::local_repo_ready(&ctx) {
-        return;
-    }
-    if let Some(editor) = app.editor.as_mut() {
-        editor.flash(format!("Cloning into {} …", ctx.local_clone.display()));
-    }
-    match sync::ensure_repo(&ctx) {
-        Ok(status) => {
-            app.sync_status = status;
-            let tracked = ctx.tracked_path();
-            if tracked.exists() {
-                if let Ok(inv) = Inventory::load_from_path(&tracked) {
-                    app.config.apply_inventory(inv);
-                }
-            }
-            app.record_sync(sync::has_uncommitted_changes(&ctx).ok());
-            if let Some(editor) = app.editor.as_mut() {
-                editor.flash(format!("Cloned · {}", status.label()));
-            }
-        }
-        Err(err) => {
-            app.sync_status = SyncStatus::Failed;
-            if let Some(editor) = app.editor.as_mut() {
-                editor.flash(format!("Clone failed: {err:#}"));
-            }
-        }
-    }
-}
-
-fn save_config(app: &mut App) -> Result<()> {
-    app.config.save(&app.config_path)?;
-    if let Some(editor) = app.editor.as_mut() {
-        editor.dirty = false;
-        editor.flash("Saved");
-    }
-    app.set_status_success(format!("Saved to {}", app.config_path.display()));
-
-    if let Some(sync_cfg) = app.config.sync.as_ref() {
-        if sync_cfg.auto_push.unwrap_or(false) {
-            if let Some(ctx) = SyncContext::from(sync_cfg) {
-                let inventory = app.config.to_inventory();
-                let outcome = inventory
-                    .save_to_path(ctx.tracked_path())
-                    .and_then(|()| sync::commit_and_push(&ctx, "chore: update hoppr inventory"));
-                match outcome {
-                    Ok(()) => {
-                        app.set_status_success("Auto-pushed inventory upstream");
-                        app.record_sync(Some(false));
-                    }
-                    Err(err) => app.set_status_error(format!("Auto-push failed: {err:#}")),
-                }
-            }
-        } else {
-            // No auto-push — refresh the dirty flag so the chip reflects
-            // that the local clone now has uncommitted edits waiting.
-            app.sync_dirty = probe_sync_dirty(&app.config);
-        }
-    }
-    Ok(())
 }
 
 // ─── headless subcommands ───────────────────────────────────────────────────
 
-fn run_config_cmd(cmd: ConfigCmd, config_path: &Path) -> Result<()> {
+fn run_config_cmd(cmd: &ConfigCmd, config_path: &Path) -> Result<()> {
     match cmd {
         ConfigCmd::Path => {
             println!("{}", config_path.display());
         }
         ConfigCmd::Show => {
             let cfg = Config::load_or_default(config_path)?;
-            println!("{}", serde_yaml::to_string(&cfg)?);
+            println!("{}", printable_yaml(cfg)?);
         }
         ConfigCmd::Edit => {
             if !config_path.exists() {
@@ -1148,7 +538,7 @@ fn run_config_cmd(cmd: ConfigCmd, config_path: &Path) -> Result<()> {
             }
         }
         ConfigCmd::Init { force } => {
-            if config_path.exists() && !force {
+            if config_path.exists() && !*force {
                 return Err(anyhow!(
                     "config already exists at {} — pass --force to overwrite",
                     config_path.display()
@@ -1181,7 +571,7 @@ fn starter_config() -> Config {
     }
 }
 
-fn run_sync_cmd(cmd: SyncCmd, _cli: &Cli, config_path: &Path) -> Result<()> {
+fn run_sync_cmd(cmd: SyncCmd, config_path: &Path) -> Result<()> {
     let cfg = Config::load_or_default(config_path)?;
     let sync_cfg = cfg.sync.as_ref().ok_or_else(|| {
         anyhow!(
@@ -1201,13 +591,13 @@ fn run_sync_cmd(cmd: SyncCmd, _cli: &Cli, config_path: &Path) -> Result<()> {
                 .save_to_path(ctx.tracked_path())
                 .context("write inventory into tracked path")?;
             sync::commit_and_push(&ctx, &message)?;
-            println!("pushed to {}@{}", ctx.repo_url, ctx.branch);
+            println!("{}", push_summary(&ctx));
         }
         SyncCmd::Status => {
             let branch = sync::current_branch(&ctx).unwrap_or_else(|_| "?".into());
             let dirty = sync::has_uncommitted_changes(&ctx).unwrap_or(false);
             println!("repo:   {}", ctx.safe_url());
-            println!("branch: {}", branch);
+            println!("branch: {branch}");
             println!("local:  {}", ctx.local_clone.display());
             println!("dirty:  {dirty}");
         }
@@ -1215,7 +605,11 @@ fn run_sync_cmd(cmd: SyncCmd, _cli: &Cli, config_path: &Path) -> Result<()> {
     Ok(())
 }
 
-fn run_list(args: ListArgs, config: &Config) -> Result<()> {
+fn push_summary(ctx: &SyncContext) -> String {
+    format!("pushed to {}@{}", ctx.safe_url(), ctx.branch)
+}
+
+fn run_list(args: &ListArgs, config: &Config) -> Result<()> {
     let categories: Vec<&Category> = config
         .categories
         .iter()
@@ -1239,27 +633,9 @@ fn run_list(args: ListArgs, config: &Config) -> Result<()> {
                 sync: config.sync.clone(),
                 categories: categories.into_iter().cloned().collect(),
             };
-            println!("{}", serde_yaml::to_string(&filtered)?);
+            println!("{}", printable_yaml(filtered)?);
         }
-        ListFormat::Json => {
-            let filtered: Vec<_> = categories.into_iter().cloned().collect();
-            let mut out = String::from("[");
-            for (i, c) in filtered.iter().enumerate() {
-                if i > 0 {
-                    out.push(',');
-                }
-                out.push_str(&format!("{{\"name\":{:?},\"hosts\":[", c.name));
-                for (j, h) in c.hosts.iter().enumerate() {
-                    if j > 0 {
-                        out.push(',');
-                    }
-                    out.push_str(&format!("{{\"name\":{:?},\"ip\":{:?}}}", h.name, h.ip));
-                }
-                out.push_str("]}");
-            }
-            out.push(']');
-            println!("{out}");
-        }
+        ListFormat::Json => println!("{}", list_json(&categories)?),
         ListFormat::Table => {
             let mut writer = io::stdout().lock();
             writeln!(writer, "CATEGORY            HOST                IP")?;
@@ -1279,7 +655,17 @@ fn run_list(args: ListArgs, config: &Config) -> Result<()> {
     Ok(())
 }
 
-fn run_history(args: HistoryArgs, history: &HistoryStore) -> Result<()> {
+/// YAML for stdout. Takes the config by value because the dump is not the
+/// config: credentials embedded in `sync.repo` are stripped, as terminal
+/// output ends up in scrollback, logs and pasted bug reports.
+fn printable_yaml(mut config: Config) -> Result<String> {
+    if let Some(repo) = config.sync.as_mut().and_then(|sync| sync.repo.as_mut()) {
+        *repo = sync::redact_url(repo);
+    }
+    yaml_serde::to_string(&config).context("serialize config as YAML")
+}
+
+fn run_history(args: &HistoryArgs, history: &HistoryStore) -> Result<()> {
     let entries: Vec<_> = history.recent(args.limit).collect();
 
     match args.format {
@@ -1306,39 +692,74 @@ fn run_history(args: HistoryArgs, history: &HistoryStore) -> Result<()> {
                 println!("{}/{}\t{}", e.category, e.host_name, e.ip);
             }
         }
-        ListFormat::Json => {
-            let mut out = String::from("[");
-            for (i, e) in entries.iter().enumerate() {
-                if i > 0 {
-                    out.push(',');
-                }
-                out.push_str(&format!(
-                    "{{\"host\":{:?},\"ip\":{:?},\"category\":{:?},\"connected_at\":{:?}}}",
-                    e.host_name,
-                    e.ip,
-                    e.category,
-                    e.connected_at_display()
-                ));
-            }
-            out.push(']');
-            println!("{out}");
-        }
+        ListFormat::Json => println!("{}", history_json(&entries)?),
         ListFormat::Yaml => {
             let data: Vec<_> = entries
                 .iter()
                 .map(|e| {
-                    let mut m = serde_yaml::Mapping::new();
+                    let mut m = yaml_serde::Mapping::new();
                     m.insert("host".into(), e.host_name.clone().into());
                     m.insert("ip".into(), e.ip.clone().into());
                     m.insert("category".into(), e.category.clone().into());
                     m.insert("connected_at".into(), e.connected_at_display().into());
-                    serde_yaml::Value::Mapping(m)
+                    yaml_serde::Value::Mapping(m)
                 })
                 .collect();
-            println!("{}", serde_yaml::to_string(&data)?);
+            println!("{}", yaml_serde::to_string(&data)?);
         }
     }
     Ok(())
+}
+
+#[derive(Serialize)]
+struct JsonCategory<'a> {
+    name: &'a str,
+    hosts: Vec<JsonHost<'a>>,
+}
+
+#[derive(Serialize)]
+struct JsonHost<'a> {
+    name: &'a str,
+    ip: &'a str,
+}
+
+#[derive(Serialize)]
+struct JsonHistoryEntry<'a> {
+    host: &'a str,
+    ip: &'a str,
+    category: &'a str,
+    connected_at: String,
+}
+
+fn list_json(categories: &[&Category]) -> Result<String> {
+    let rows: Vec<JsonCategory> = categories
+        .iter()
+        .map(|category| JsonCategory {
+            name: &category.name,
+            hosts: category
+                .hosts
+                .iter()
+                .map(|host| JsonHost {
+                    name: &host.name,
+                    ip: &host.ip,
+                })
+                .collect(),
+        })
+        .collect();
+    serde_json::to_string(&rows).context("serialize host list as JSON")
+}
+
+fn history_json(entries: &[&HistoryEntry]) -> Result<String> {
+    let rows: Vec<JsonHistoryEntry> = entries
+        .iter()
+        .map(|entry| JsonHistoryEntry {
+            host: &entry.host_name,
+            ip: &entry.ip,
+            category: &entry.category,
+            connected_at: entry.connected_at_display(),
+        })
+        .collect();
+    serde_json::to_string(&rows).context("serialize history as JSON")
 }
 
 fn truncate(input: &str, max: usize) -> String {
@@ -1350,17 +771,19 @@ fn truncate(input: &str, max: usize) -> String {
     out
 }
 
-fn run_connect(args: ConnectArgs, config: &Config) -> Result<()> {
+/// Runs the connection and returns the exit code `hoppr connect` should end
+/// with, so a script can tell a failed remote shell from a clean one.
+fn run_connect(args: ConnectArgs, config: &Config) -> Result<i32> {
     let host = find_host(config, &args.query)
         .ok_or_else(|| anyhow!("no host matched query: {}", args.query))?;
-    let mut effective = host.clone();
-    if let Some(user) = args.user.clone() {
+    let mut effective = host;
+    if let Some(user) = args.user {
         effective.user = Some(user);
     }
     if let Some(port) = args.port {
         effective.port = Some(port);
     }
-    if let Some(cmd) = args.command.clone() {
+    if let Some(cmd) = args.command {
         effective.command = Some(config::ConnectCommand::Program(cmd));
     }
 
@@ -1372,15 +795,31 @@ fn run_connect(args: ConnectArgs, config: &Config) -> Result<()> {
             .map(|a| a.to_string_lossy().into_owned())
             .collect();
         println!("{program} {}", args.join(" "));
-        return Ok(());
+        return Ok(0);
     }
     let mut command = command;
-    command
+    let status = command
         .stdin(Stdio::inherit())
         .stdout(Stdio::inherit())
         .stderr(Stdio::inherit())
         .status()?;
-    Ok(())
+    Ok(exit_code_for(status))
+}
+
+/// A child killed by a signal has no exit code; shells report it as
+/// 128 + the signal number, and scripts wrapping `hoppr connect` expect that.
+fn exit_code_for(status: ExitStatus) -> i32 {
+    if let Some(code) = status.code() {
+        return code;
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::ExitStatusExt;
+        if let Some(signal) = status.signal() {
+            return 128 + signal;
+        }
+    }
+    1
 }
 
 fn find_host(config: &Config, query: &str) -> Option<Host> {
@@ -1419,4 +858,341 @@ fn find_host(config: &Config, query: &str) -> Option<Host> {
         .collect();
     scored.sort_by_key(|(score, _)| Reverse(*score));
     scored.first().map(|(_, h)| (*h).clone())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn run_session_reports_the_program_that_could_not_be_started() {
+        let mut command = Command::new("hoppr-test-no-such-program");
+        let err = run_session(&mut command, "ops@10.0.0.1").expect_err("spawn fails");
+        let message = format!("{err:#}");
+        assert!(
+            message.starts_with("Could not start hoppr-test-no-such-program: "),
+            "unexpected message: {message}"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn exit_code_for_maps_codes_and_signals() {
+        use std::os::unix::process::ExitStatusExt;
+
+        assert_eq!(exit_code_for(ExitStatus::from_raw(0)), 0);
+        assert_eq!(exit_code_for(ExitStatus::from_raw(3 << 8)), 3);
+        assert_eq!(exit_code_for(ExitStatus::from_raw(255 << 8)), 255);
+        assert_eq!(exit_code_for(ExitStatus::from_raw(15)), 128 + 15);
+        assert_eq!(exit_code_for(ExitStatus::from_raw(9)), 128 + 9);
+    }
+
+    #[cfg(unix)]
+    fn connect_args(query: &str, dry_run: bool) -> ConnectArgs {
+        ConnectArgs {
+            query: query.into(),
+            user: None,
+            port: None,
+            command: None,
+            dry_run,
+        }
+    }
+
+    #[cfg(unix)]
+    fn config_with_cmd_hosts() -> Config {
+        let host = |name: &str, cmd: &str| Host {
+            name: name.into(),
+            ip: "127.0.0.1".into(),
+            cmd: Some(cmd.into()),
+            ..Host::default()
+        };
+        Config {
+            categories: vec![Category {
+                name: "local".into(),
+                icon: None,
+                hosts: vec![
+                    host("clean", "exit 0"),
+                    host("failing", "exit 7"),
+                    host("killed", "kill -TERM $$"),
+                ],
+            }],
+            ..Config::default()
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn run_connect_returns_the_exit_code_of_the_child() {
+        let config = config_with_cmd_hosts();
+        let code = |query: &str, dry_run: bool| {
+            run_connect(connect_args(query, dry_run), &config).expect("child runs")
+        };
+        assert_eq!(code("local/clean", false), 0);
+        assert_eq!(code("local/failing", false), 7);
+        assert_eq!(code("local/killed", false), 128 + 15);
+        assert_eq!(code("local/failing", true), 0);
+    }
+
+    fn browsing_app(dir: &tempfile::TempDir) -> App {
+        let config = Config {
+            categories: vec![Category {
+                name: "prod".into(),
+                icon: None,
+                hosts: ["web-01", "web-02"]
+                    .into_iter()
+                    .map(|name| Host {
+                        name: name.into(),
+                        ip: "10.0.0.1".into(),
+                        ..Host::default()
+                    })
+                    .collect(),
+            }],
+            ..Config::default()
+        };
+        App::new(
+            config,
+            dir.path().join("config.yaml"),
+            SyncStatus::Disabled,
+            HistoryStore::load(&dir.path().join("history.yaml")),
+            FavoritesStore::load(&dir.path().join("favorites.yaml")),
+            TerminalLauncher::detect(None),
+        )
+    }
+
+    const CTRL_ALT: KeyModifiers = KeyModifiers::CONTROL.union(KeyModifiers::ALT);
+
+    #[test]
+    fn browse_letters_ignore_ctrl_and_alt_chords() {
+        let dir = tempfile::TempDir::new().expect("tempdir");
+        for focus in [Focus::Hosts, Focus::Categories] {
+            for modifiers in [
+                KeyModifiers::CONTROL,
+                KeyModifiers::ALT,
+                KeyModifiers::CONTROL | KeyModifiers::SHIFT,
+            ] {
+                let mut app = browsing_app(&dir);
+                app.focus = focus;
+                let selected = (app.categories_state.selected(), app.hosts_state.selected());
+                for letter in ['e', 'q', 'j', 'k', 'f', 't', '/'] {
+                    let step = browse_key(&mut app, KeyCode::Char(letter), modifiers);
+                    let context = format!("{focus:?} {modifiers:?}+{letter}");
+                    assert_eq!(step, BrowseStep::Handled, "{context}");
+                    assert_eq!(app.mode, Mode::Browse, "{context}");
+                    assert_eq!(app.focus, focus, "{context}");
+                    assert_eq!(
+                        (app.categories_state.selected(), app.hosts_state.selected()),
+                        selected,
+                        "{context}"
+                    );
+                    assert!(app.active_status().is_none(), "{context}");
+                }
+                assert!(!dir.path().join("favorites.yaml").exists());
+            }
+        }
+    }
+
+    #[test]
+    fn plain_browse_letters_and_documented_chords_still_act() {
+        let dir = tempfile::TempDir::new().expect("tempdir");
+        let none = KeyModifiers::NONE;
+
+        let mut app = browsing_app(&dir);
+        app.focus = Focus::Hosts;
+        let first = app.hosts_state.selected();
+        browse_key(&mut app, KeyCode::Char('j'), none);
+        assert_ne!(app.hosts_state.selected(), first);
+        browse_key(&mut app, KeyCode::Char('k'), none);
+        assert_eq!(app.hosts_state.selected(), first);
+        assert_eq!(
+            browse_key(&mut app, KeyCode::Enter, none),
+            BrowseStep::Connect
+        );
+        assert_eq!(
+            browse_key(&mut app, KeyCode::Char('q'), none),
+            BrowseStep::Quit
+        );
+        assert_eq!(
+            browse_key(&mut app, KeyCode::Char('c'), CTRL_ALT),
+            BrowseStep::Handled
+        );
+        assert_eq!(
+            browse_key(&mut app, KeyCode::Char('c'), KeyModifiers::CONTROL),
+            BrowseStep::Quit
+        );
+
+        browse_key(&mut app, KeyCode::Char('a'), KeyModifiers::CONTROL);
+        assert!(app.search_all);
+        browse_key(&mut app, KeyCode::Char('a'), CTRL_ALT);
+        assert!(app.search_all);
+
+        browse_key(&mut app, KeyCode::Char('/'), none);
+        assert_eq!(app.focus, Focus::Search);
+        browse_key(&mut app, KeyCode::Char('/'), none);
+        assert_eq!(app.search_query, "/");
+        browse_key(&mut app, KeyCode::Backspace, none);
+        for (letter, modifiers) in [('q', none), ('e', none), ('a', CTRL_ALT), ('q', CTRL_ALT)] {
+            let step = browse_key(&mut app, KeyCode::Char(letter), modifiers);
+            assert_eq!(step, BrowseStep::Handled);
+        }
+        assert_eq!(app.search_query, "qeaq");
+        browse_key(&mut app, KeyCode::Char('u'), CTRL_ALT);
+        assert_eq!(app.search_query, "qeaqu");
+        browse_key(&mut app, KeyCode::Char('u'), KeyModifiers::CONTROL);
+        assert_eq!(app.search_query, "");
+
+        browse_key(&mut app, KeyCode::Esc, none);
+        browse_key(&mut app, KeyCode::Char('e'), none);
+        assert_eq!(app.mode, Mode::Edit);
+    }
+
+    #[test]
+    fn help_key_is_a_plain_question_mark_or_f1() {
+        assert!(is_help_key(KeyCode::Char('?'), KeyModifiers::NONE));
+        assert!(is_help_key(KeyCode::Char('?'), KeyModifiers::SHIFT));
+        assert!(is_help_key(KeyCode::F(1), KeyModifiers::NONE));
+        assert!(!is_help_key(KeyCode::Char('?'), KeyModifiers::CONTROL));
+        assert!(!is_help_key(KeyCode::Char('?'), KeyModifiers::ALT));
+    }
+
+    #[test]
+    fn search_input_ignores_chords_but_keeps_altgr_text() {
+        let dir = tempfile::TempDir::new().expect("tempdir");
+        let mut app = browsing_app(&dir);
+        app.focus_search();
+
+        type_into_search(&mut app, KeyCode::Char('w'), KeyModifiers::NONE);
+        type_into_search(&mut app, KeyCode::Char('x'), KeyModifiers::CONTROL);
+        type_into_search(&mut app, KeyCode::Char('y'), KeyModifiers::ALT);
+        type_into_search(&mut app, KeyCode::Char('W'), KeyModifiers::SHIFT);
+        type_into_search(
+            &mut app,
+            KeyCode::Char('@'),
+            KeyModifiers::CONTROL | KeyModifiers::ALT,
+        );
+        assert_eq!(app.search_query, "wW@");
+    }
+
+    const AWKWARD: &str = "q\"b\\t\tn\nc\u{7}é\u{1F680}";
+
+    #[test]
+    fn list_json_keeps_layout_and_escapes_awkward_names() {
+        let plain = Category {
+            name: "prod".into(),
+            icon: None,
+            hosts: vec![Host {
+                name: "web-01".into(),
+                ip: "10.0.0.1".into(),
+                ..Host::default()
+            }],
+        };
+        assert_eq!(
+            list_json(&[&plain]).expect("json"),
+            r#"[{"name":"prod","hosts":[{"name":"web-01","ip":"10.0.0.1"}]}]"#
+        );
+
+        let awkward = Category {
+            name: AWKWARD.into(),
+            icon: None,
+            hosts: vec![Host {
+                name: AWKWARD.into(),
+                ip: "10.0.0.2".into(),
+                ..Host::default()
+            }],
+        };
+        let parsed: serde_json::Value =
+            serde_json::from_str(&list_json(&[&awkward]).expect("json")).expect("valid JSON");
+        assert_eq!(parsed[0]["name"], AWKWARD);
+        assert_eq!(parsed[0]["hosts"][0]["name"], AWKWARD);
+    }
+
+    #[test]
+    fn history_json_keeps_layout_and_escapes_awkward_names() {
+        let entry = HistoryEntry {
+            host_name: "web-01".into(),
+            ip: "10.0.0.1".into(),
+            category: "prod".into(),
+            connected_at: 0,
+        };
+        assert_eq!(
+            history_json(&[&entry]).expect("json"),
+            r#"[{"host":"web-01","ip":"10.0.0.1","category":"prod","connected_at":"1970-01-01 00:00"}]"#
+        );
+
+        let awkward = HistoryEntry {
+            host_name: AWKWARD.into(),
+            category: AWKWARD.into(),
+            ..entry
+        };
+        let parsed: serde_json::Value =
+            serde_json::from_str(&history_json(&[&awkward]).expect("json")).expect("valid JSON");
+        assert_eq!(parsed[0]["host"], AWKWARD);
+        assert_eq!(parsed[0]["category"], AWKWARD);
+    }
+
+    #[test]
+    fn printable_yaml_strips_repo_credentials_and_nothing_else() {
+        let config = Config {
+            sync: Some(config::SyncConfig {
+                repo: Some("https://alice:s3cret@git.example.com/team/hosts.git".into()),
+                branch: Some("trunk".into()),
+                ..Default::default()
+            }),
+            categories: vec![Category {
+                name: "prod".into(),
+                icon: None,
+                hosts: vec![Host {
+                    name: "web-01".into(),
+                    ip: "10.0.0.1".into(),
+                    user: Some("alice".into()),
+                    ..Host::default()
+                }],
+            }],
+            ..Config::default()
+        };
+
+        let printed = printable_yaml(config.clone()).expect("yaml");
+        assert!(!printed.contains("s3cret"), "{printed}");
+        let parsed: Config = yaml_serde::from_str(&printed).expect("still a config");
+        let sync_cfg = parsed.sync.expect("sync stanza kept");
+        assert_eq!(
+            sync_cfg.repo.as_deref(),
+            Some("https://git.example.com/team/hosts.git")
+        );
+        assert_eq!(sync_cfg.branch.as_deref(), Some("trunk"));
+        assert_eq!(parsed.categories[0].hosts, config.categories[0].hosts);
+    }
+
+    #[test]
+    fn printable_yaml_leaves_ssh_urls_and_unsynced_configs_alone() {
+        let mut config = Config {
+            sync: Some(config::SyncConfig {
+                repo: Some("git@github.com:team/hosts.git".into()),
+                ..Default::default()
+            }),
+            ..Config::default()
+        };
+        let printed = printable_yaml(config.clone()).expect("yaml");
+        assert!(
+            printed.contains("git@github.com:team/hosts.git"),
+            "{printed}"
+        );
+
+        config.sync = None;
+        let printed = printable_yaml(config).expect("yaml");
+        assert!(printed.contains("sync: null"), "{printed}");
+    }
+
+    #[test]
+    fn push_summary_does_not_leak_url_credentials() {
+        let sync_cfg = config::SyncConfig {
+            repo: Some("https://alice:s3cret@git.example.com/team/hosts.git".into()),
+            branch: Some("trunk".into()),
+            ..Default::default()
+        };
+        let ctx = SyncContext::from(&sync_cfg).expect("repo is set");
+        assert_eq!(
+            push_summary(&ctx),
+            "pushed to https://git.example.com/team/hosts.git@trunk"
+        );
+    }
 }
