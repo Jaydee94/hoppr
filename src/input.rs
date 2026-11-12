@@ -98,10 +98,10 @@ pub fn handle_editor_key(
 fn perform(app: &mut App, action: Action, redraw: &mut Redraw<'_>) -> Result<()> {
     match action {
         Action::None => {}
-        Action::Save => save_config(app)?,
+        Action::Save => save_config(app, redraw)?,
         Action::Exit => app.exit_edit_mode(),
         Action::SaveAndExit => {
-            save_config(app)?;
+            save_config(app, redraw)?;
             app.exit_edit_mode();
         }
         Action::DiscardAndExit => {
@@ -889,7 +889,7 @@ fn migrate_renamed_entries(app: &mut App) {
     }
 }
 
-fn save_config(app: &mut App) -> Result<()> {
+fn save_config(app: &mut App, redraw: &mut Redraw<'_>) -> Result<()> {
     app.config.save(&app.config_path)?;
     migrate_renamed_entries(app);
     if let Some(editor) = app.editor.as_mut() {
@@ -901,6 +901,10 @@ fn save_config(app: &mut App) -> Result<()> {
     if let Some(sync_cfg) = app.config.sync.as_ref() {
         if sync_cfg.auto_push.unwrap_or(false) {
             if let Some(ctx) = SyncContext::from(sync_cfg) {
+                flash(app, "Saved · pushing …");
+                app.set_status("Pushing inventory upstream …");
+                redraw(app)?;
+                flash(app, "Saved");
                 let inventory = app.config.to_inventory();
                 let outcome = inventory
                     .save_to_path(ctx.tracked_path())
@@ -1023,6 +1027,43 @@ mod tests {
         assert!(frames[0].starts_with("Cloning into "), "{frames:?}");
         let result = editor(&app).flash.clone().unwrap_or_default();
         assert!(result.starts_with("Clone failed"), "{result}");
+    }
+
+    #[test]
+    fn saving_with_auto_push_draws_a_progress_message_before_pushing() {
+        let dir = TempDir::new().expect("tempdir");
+        let mut app = editing_app(&dir);
+        open_sync_form(&mut app, &dir, SYNC_BTN_SAVE);
+        app.editor.as_mut().expect("editor open").sync_inputs[SYNC_AUTO_PUSH] = "true".into();
+
+        let mut frames = Vec::new();
+        handle_editor_key(&mut app, KeyCode::Enter, KeyModifiers::NONE, &mut |app| {
+            let status = app.active_status().map(|msg| msg.text.clone());
+            frames.push((editor(app).flash.clone(), status));
+            Ok(())
+        })
+        .expect("key handled");
+
+        assert_eq!(
+            frames,
+            [(
+                Some("Saved · pushing …".to_string()),
+                Some("Pushing inventory upstream …".to_string())
+            )]
+        );
+        assert_eq!(editor(&app).flash.as_deref(), Some("Saved"));
+        let status = app.active_status().expect("push result").text.clone();
+        assert!(status.starts_with("Auto-push failed"), "{status}");
+        assert!(app.config_path.exists());
+    }
+
+    #[test]
+    fn saving_without_auto_push_does_not_force_a_redraw() {
+        let dir = TempDir::new().expect("tempdir");
+        let mut app = editing_app(&dir);
+        open_sync_form(&mut app, &dir, SYNC_BTN_SAVE);
+        assert!(press_recording_redraws(&mut app, KeyCode::Enter).is_empty());
+        assert!(app.config_path.exists());
     }
 
     #[test]
