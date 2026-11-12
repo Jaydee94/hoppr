@@ -937,7 +937,10 @@ fn save_config(app: &mut App, redraw: &mut Redraw<'_>) -> Result<()> {
                         app.set_status_success("Auto-pushed inventory upstream");
                         app.record_sync(Some(false));
                     }
-                    Err(err) => app.set_status_error(format!("Auto-push failed: {err:#}")),
+                    Err(err) => {
+                        flash(app, "Saved locally · push failed");
+                        app.set_status_error(format!("Auto-push failed: {err:#}"));
+                    }
                 }
             }
         } else {
@@ -1074,10 +1077,26 @@ mod tests {
                 Some("Pushing inventory upstream …".to_string())
             )]
         );
-        assert_eq!(editor(&app).flash.as_deref(), Some("Saved"));
         let status = app.active_status().expect("push result").text.clone();
         assert!(status.starts_with("Auto-push failed"), "{status}");
         assert!(app.config_path.exists());
+    }
+
+    #[test]
+    fn a_failed_auto_push_is_named_in_the_editor_footer() {
+        let dir = TempDir::new().expect("tempdir");
+        let mut app = editing_app(&dir);
+        open_sync_form(&mut app, &dir, SYNC_BTN_SAVE);
+        app.editor.as_mut().expect("editor open").sync_inputs[SYNC_AUTO_PUSH] = "true".into();
+
+        press(&mut app, KeyCode::Enter);
+        assert_eq!(flash_of(&app), "Saved locally · push failed");
+        assert!(!editor(&app).dirty);
+        assert!(app.config_path.exists());
+
+        app.editor.as_mut().expect("editor open").sync_inputs[SYNC_AUTO_PUSH] = "false".into();
+        press(&mut app, KeyCode::Enter);
+        assert_eq!(flash_of(&app), "Saved");
     }
 
     #[test]
