@@ -5,7 +5,7 @@
 | key                  | action                                                      |
 | -------------------- | ----------------------------------------------------------- |
 | `Tab`                | Toggle focus between Categories ↔ Hosts                     |
-| `/`                  | Focus the search input (always starts a fresh query)        |
+| `/`                  | Focus the search input (always starts a fresh query). Inside the search input it types a `/`, so names containing one can be searched. |
 | `Esc`                | When in search: clear focus back to Hosts. Else: quit.      |
 | `q`                  | Quit                                                        |
 | `Ctrl+C`             | Quit (from any mode)                                        |
@@ -92,7 +92,7 @@ Text inputs — the add / edit forms, connection defaults, the sync form, the li
 
 - **Manage categories** — list, add (`a`), rename (`r` / `Enter`), delete (`d` then confirm with `y`).
 - **Manage hosts** — `Tab` / `Shift+Tab` cycle to the next / previous category. Use `↑↓` (or `j`/`k`) to move within the host list. Same `a/r/d` semantics; `d` opens a `y/n` confirmation modal so a stray keypress can't wipe an entry.
-- **Connection defaults** — edit `defaults.command` (program), default port, default user. `Enter` applies the form; `Ctrl+S` applies it and writes the config to disk. `Esc` also applies what you typed before going back to the menu, so it is part of the next save (and of the unsaved-changes prompt); if the form does not validate, the error is shown and you stay in the form.
+- **Connection defaults** — edit `defaults.command` (program), default port, default user. A `defaults.command` template keeps its `args` as long as the program name is unchanged; entering a different program replaces the template with the shorthand form. `Enter` applies the form; `Ctrl+S` applies it and writes the config to disk. `Esc` also applies what you typed before going back to the menu, so it is part of the next save (and of the unsaved-changes prompt); if the form does not validate, the error is shown and you stay in the form.
 - **Central repo sync** — edit the `sync.*` block. Tab/↑↓ moves through the six form fields and the three action buttons underneath; `Space` toggles `auto-pull` / `auto-push`; `Enter` either applies the form (text fields), flips the toggle (booleans), or fires the button. `Ctrl+S` applies the form and saves, like the `[Save & push]` button. `Esc` applies typed text and toggles before going back to the menu, without contacting the repo.
 
 ### Sync editor controls

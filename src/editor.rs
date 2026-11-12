@@ -488,7 +488,14 @@ impl EditorState {
             .parse()
             .map_err(|_| "Port must be a number 0-65535".to_string())?;
 
-        config.defaults.command = ConnectCommand::Program(program.into());
+        // The form only edits the program name. A template for the same
+        // program keeps its args; a different program gets the shorthand
+        // form, since the old args were written for another tool.
+        let keeps_template = config.defaults.command.args().is_some()
+            && config.defaults.command.program() == program;
+        if !keeps_template {
+            config.defaults.command = ConnectCommand::Program(program.into());
+        }
         config.defaults.port = port;
         config.defaults.user = empty_to_none(&self.defaults_inputs[2]);
         config.defaults.terminal_command = empty_to_none(&self.defaults_inputs[3]);
@@ -615,6 +622,38 @@ mod tests {
         state.defaults_inputs[3] = "  wt  ".into();
         state.apply_defaults(&mut config).unwrap();
         assert_eq!(config.defaults.terminal_command.as_deref(), Some("wt"));
+    }
+
+    fn template_defaults() -> Config {
+        let mut config = Config::default();
+        config.defaults.command = ConnectCommand::Template {
+            program: "kitty".into(),
+            args: vec!["+kitten".into(), "ssh".into(), "{user}@{host}".into()],
+        };
+        config
+    }
+
+    #[test]
+    fn apply_defaults_keeps_template_args_when_the_program_is_unchanged() {
+        let mut config = template_defaults();
+        let expected = config.defaults.command.clone();
+        let mut state = EditorState::from_config(&config);
+        state.defaults_inputs[1] = "2222".into();
+        state.apply_defaults(&mut config).unwrap();
+        assert_eq!(config.defaults.port, 2222);
+        assert_eq!(config.defaults.command, expected);
+    }
+
+    #[test]
+    fn apply_defaults_drops_template_args_when_the_program_changes() {
+        let mut config = template_defaults();
+        let mut state = EditorState::from_config(&config);
+        state.defaults_inputs[0] = "mosh".into();
+        state.apply_defaults(&mut config).unwrap();
+        assert_eq!(
+            config.defaults.command,
+            ConnectCommand::Program("mosh".into())
+        );
     }
 
     #[test]
