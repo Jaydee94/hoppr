@@ -7,7 +7,7 @@
 //! has ended.
 
 use anyhow::Result;
-use crossterm::event::KeyCode;
+use crossterm::event::{KeyCode, KeyModifiers};
 
 use crate::{
     app::App,
@@ -45,7 +45,9 @@ enum Step {
     Forward,
 }
 
-pub fn handle_editor_key(app: &mut App, code: KeyCode, ctrl: bool) -> Result<Flow> {
+pub fn handle_editor_key(app: &mut App, code: KeyCode, modifiers: KeyModifiers) -> Result<Flow> {
+    let ctrl = modifiers.contains(KeyModifiers::CONTROL);
+    let chord = modifiers.intersects(KeyModifiers::CONTROL | KeyModifiers::ALT);
     if ctrl && matches!(code, KeyCode::Char('c')) {
         return Ok(Flow::Quit);
     }
@@ -61,15 +63,15 @@ pub fn handle_editor_key(app: &mut App, code: KeyCode, ctrl: bool) -> Result<Flo
     // the same reason: "j" must not both cancel the prompt and move the
     // selection in the same tick.
     let action = if editor.pending_exit {
-        handle_pending_exit(editor, code)
+        handle_pending_exit(editor, code, chord)
     } else if editor.pending_delete.is_some() {
-        handle_pending_delete(editor, config, code);
+        handle_pending_delete(editor, config, code, chord);
         Action::None
     } else {
         match editor.view {
-            EditorView::Menu => handle_menu(editor, code, ctrl),
-            EditorView::Categories => handle_categories(editor, config, code, ctrl),
-            EditorView::Hosts => handle_hosts(editor, config, code, ctrl),
+            EditorView::Menu => handle_menu(editor, list_key(code, modifiers)),
+            EditorView::Categories => handle_categories(editor, config, code, modifiers),
+            EditorView::Hosts => handle_hosts(editor, config, code, modifiers),
             EditorView::CategoryForm => {
                 if let Some(msg) = handle_category_form(editor, config, code) {
                     editor.flash(msg);
@@ -114,7 +116,30 @@ fn perform(app: &mut App, action: Action) -> Result<()> {
     Ok(())
 }
 
-fn handle_pending_exit(editor: &mut EditorState, code: KeyCode) -> Action {
+/// A key press as the list-style views (menu, categories, hosts) see it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ListKey {
+    Plain(KeyCode),
+    Save,
+    Unbound,
+}
+
+/// The list views bind bare letters (`a`, `d`, `r`, `j`, `k`, `/`), so a
+/// letter held with Ctrl or Alt must not fall through to them: Ctrl+D is
+/// not "delete". Ctrl+S is the only chord they know.
+fn list_key(code: KeyCode, modifiers: KeyModifiers) -> ListKey {
+    let chord = modifiers.intersects(KeyModifiers::CONTROL | KeyModifiers::ALT);
+    match code {
+        KeyCode::Char('s') if modifiers.contains(KeyModifiers::CONTROL) => ListKey::Save,
+        KeyCode::Char(_) if chord => ListKey::Unbound,
+        _ => ListKey::Plain(code),
+    }
+}
+
+fn handle_pending_exit(editor: &mut EditorState, code: KeyCode, chord: bool) -> Action {
+    if chord {
+        return Action::None;
+    }
     match code {
         KeyCode::Char('s') => Action::SaveAndExit,
         KeyCode::Char('d') => Action::DiscardAndExit,
@@ -126,8 +151,13 @@ fn handle_pending_exit(editor: &mut EditorState, code: KeyCode) -> Action {
     }
 }
 
-fn handle_pending_delete(editor: &mut EditorState, config: &mut Config, code: KeyCode) {
-    if code != KeyCode::Char('y') {
+fn handle_pending_delete(
+    editor: &mut EditorState,
+    config: &mut Config,
+    code: KeyCode,
+    chord: bool,
+) {
+    if chord || code != KeyCode::Char('y') {
         editor.cancel_delete();
         editor.flash("Delete cancelled");
         return;
@@ -144,7 +174,12 @@ fn handle_pending_delete(editor: &mut EditorState, config: &mut Config, code: Ke
     }
 }
 
-fn handle_menu(editor: &mut EditorState, code: KeyCode, ctrl: bool) -> Action {
+fn handle_menu(editor: &mut EditorState, key: ListKey) -> Action {
+    let code = match key {
+        ListKey::Plain(code) => code,
+        ListKey::Save if editor.dirty => return Action::Save,
+        ListKey::Save | ListKey::Unbound => return Action::None,
+    };
     match code {
         KeyCode::Esc => {
             if editor.dirty {
@@ -160,7 +195,6 @@ fn handle_menu(editor: &mut EditorState, code: KeyCode, ctrl: bool) -> Action {
             editor.menu_index = (editor.menu_index + 1) % MENU_ITEMS.len();
         }
         KeyCode::Enter => editor.view = MENU_ITEMS[editor.menu_index].1,
-        KeyCode::Char('s') if ctrl && editor.dirty => return Action::Save,
         _ => {}
     }
     Action::None
@@ -170,12 +204,17 @@ fn handle_categories(
     editor: &mut EditorState,
     config: &Config,
     code: KeyCode,
-    ctrl: bool,
+    modifiers: KeyModifiers,
 ) -> Action {
     if editor.filter_focus {
         handle_category_filter_input(editor, config, code);
         return Action::None;
     }
+    let code = match list_key(code, modifiers) {
+        ListKey::Plain(code) => code,
+        ListKey::Save if editor.dirty => return Action::Save,
+        ListKey::Save | ListKey::Unbound => return Action::None,
+    };
     match code {
         KeyCode::Esc => {
             // Second Esc on a non-focused, populated filter clears it,
@@ -211,17 +250,26 @@ fn handle_categories(
                 });
             }
         }
-        KeyCode::Char('s') if ctrl && editor.dirty => return Action::Save,
         _ => {}
     }
     Action::None
 }
 
-fn handle_hosts(editor: &mut EditorState, config: &Config, code: KeyCode, ctrl: bool) -> Action {
+fn handle_hosts(
+    editor: &mut EditorState,
+    config: &Config,
+    code: KeyCode,
+    modifiers: KeyModifiers,
+) -> Action {
     if editor.filter_focus {
         handle_host_filter_input(editor, config, code);
         return Action::None;
     }
+    let code = match list_key(code, modifiers) {
+        ListKey::Plain(code) => code,
+        ListKey::Save if editor.dirty => return Action::Save,
+        ListKey::Save | ListKey::Unbound => return Action::None,
+    };
     match code {
         KeyCode::Esc => {
             if editor.host_filter.is_some() {
@@ -284,7 +332,6 @@ fn handle_hosts(editor: &mut EditorState, config: &Config, code: KeyCode, ctrl: 
                 });
             }
         }
-        KeyCode::Char('s') if ctrl && editor.dirty => return Action::Save,
         _ => {}
     }
     Action::None
@@ -764,7 +811,11 @@ mod tests {
     }
 
     fn press(app: &mut App, code: KeyCode) -> Flow {
-        handle_editor_key(app, code, false).expect("key handled")
+        handle_editor_key(app, code, KeyModifiers::NONE).expect("key handled")
+    }
+
+    fn press_with(app: &mut App, code: KeyCode, modifiers: KeyModifiers) -> Flow {
+        handle_editor_key(app, code, modifiers).expect("key handled")
     }
 
     fn editor(app: &App) -> &EditorState {
@@ -775,7 +826,7 @@ mod tests {
     fn ctrl_c_quits_from_the_editor() {
         let dir = TempDir::new().expect("tempdir");
         let mut app = editing_app(&dir);
-        let flow = handle_editor_key(&mut app, KeyCode::Char('c'), true).expect("key handled");
+        let flow = press_with(&mut app, KeyCode::Char('c'), KeyModifiers::CONTROL);
         assert_eq!(flow, Flow::Quit);
     }
 
@@ -868,6 +919,65 @@ mod tests {
     }
 
     #[test]
+    fn list_letters_ignore_ctrl_and_alt_chords() {
+        let dir = TempDir::new().expect("tempdir");
+        for modifiers in [
+            KeyModifiers::CONTROL,
+            KeyModifiers::ALT,
+            KeyModifiers::CONTROL | KeyModifiers::SHIFT,
+        ] {
+            for view in [EditorView::Categories, EditorView::Hosts] {
+                let mut app = editing_app(&dir);
+                app.editor.as_mut().expect("editor open").view = view;
+                for letter in ['a', 'r', 'd', '/', 'j', 'k'] {
+                    press_with(&mut app, KeyCode::Char(letter), modifiers);
+                    let state = editor(&app);
+                    assert_eq!(state.view, view, "{modifiers:?}+{letter}");
+                    assert!(state.pending_delete.is_none(), "{modifiers:?}+{letter}");
+                    assert!(!state.filter_focus, "{modifiers:?}+{letter}");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn plain_list_letters_still_act() {
+        let dir = TempDir::new().expect("tempdir");
+        let mut app = editing_app(&dir);
+        app.editor.as_mut().expect("editor open").view = EditorView::Hosts;
+        press(&mut app, KeyCode::Char('d'));
+        assert!(editor(&app).pending_delete.is_some());
+        press(&mut app, KeyCode::Char('n'));
+        press(&mut app, KeyCode::Char('r'));
+        assert_eq!(editor(&app).view, EditorView::HostForm);
+        press(&mut app, KeyCode::Esc);
+        press(&mut app, KeyCode::Char('a'));
+        assert_eq!(editor(&app).view, EditorView::HostForm);
+    }
+
+    #[test]
+    fn prompts_ignore_ctrl_and_alt_chords() {
+        let dir = TempDir::new().expect("tempdir");
+        let mut app = editing_app(&dir);
+        let state = app.editor.as_mut().expect("editor open");
+        state.dirty = true;
+        state.pending_exit = true;
+        press_with(&mut app, KeyCode::Char('d'), KeyModifiers::CONTROL);
+        press_with(&mut app, KeyCode::Char('s'), KeyModifiers::ALT);
+        assert_eq!(app.mode, Mode::Edit);
+        assert!(editor(&app).pending_exit);
+        assert!(!app.config_path.exists());
+
+        let state = app.editor.as_mut().expect("editor open");
+        state.pending_exit = false;
+        state.view = EditorView::Hosts;
+        press(&mut app, KeyCode::Char('d'));
+        press_with(&mut app, KeyCode::Char('y'), KeyModifiers::CONTROL);
+        assert_eq!(app.config.categories[0].hosts.len(), 1);
+        assert!(editor(&app).pending_delete.is_none());
+    }
+
+    #[test]
     fn save_reminder_names_the_key_that_actually_saves() {
         let dir = TempDir::new().expect("tempdir");
         let mut app = editing_app(&dir);
@@ -884,7 +994,7 @@ mod tests {
         assert!(editor(&app).dirty);
         assert!(!app.config_path.exists());
 
-        handle_editor_key(&mut app, KeyCode::Char('s'), true).expect("key handled");
+        press_with(&mut app, KeyCode::Char('s'), KeyModifiers::CONTROL);
         assert!(!editor(&app).dirty);
         assert!(app.config_path.exists());
     }

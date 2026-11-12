@@ -60,6 +60,8 @@ If the editor has unsaved changes when you press `Esc` on the settings menu, hop
 | `?` / `F1`           | Toggle the in-app help overlay (list views only)            |
 | `Esc`                | Back to the previous screen                                 |
 
+The letter keys above are plain keys: in the menu, the list views and the confirmation prompts, a letter pressed together with `Ctrl` or `Alt` is ignored (`Ctrl+D` does not delete, `Ctrl+Y` does not confirm). `Ctrl+S` and `Ctrl+C` are the only chords.
+
 ### Filter input (Categories / Hosts)
 
 `/` opens a single-line filter at the top of the list. While the filter is focused:
