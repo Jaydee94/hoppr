@@ -74,18 +74,17 @@ fn contains_parent_traversal(path: &str) -> bool {
 /// Strip `user:password@` (and `user@`) prefixes from an http(s) URL so secrets
 /// aren't echoed in error messages. SSH URLs (`git@host:...`) are left intact
 /// — the `git` username is conventional and there's no embedded secret.
+///
+/// Userinfo only exists inside the authority, which ends at the first `/`,
+/// `?` or `#`; an `@` further along belongs to the path or query.
 pub fn redact_url(url: &str) -> String {
-    if let Some(rest) = url
-        .strip_prefix("https://")
-        .or_else(|| url.strip_prefix("http://"))
-    {
-        let scheme = if url.starts_with("https://") {
-            "https://"
-        } else {
-            "http://"
+    for scheme in ["https://", "http://"] {
+        let Some(rest) = url.strip_prefix(scheme) else {
+            continue;
         };
-        if let Some(idx) = rest.find('@') {
-            return format!("{scheme}{}", &rest[idx + 1..]);
+        let authority_end = rest.find(['/', '?', '#']).unwrap_or(rest.len());
+        if let Some(at) = rest[..authority_end].rfind('@') {
+            return format!("{scheme}{}", &rest[at + 1..]);
         }
     }
     url.to_string()
@@ -553,6 +552,30 @@ mod tests {
         assert_eq!(
             redact_url("ssh://git@github.com/x"),
             "ssh://git@github.com/x"
+        );
+    }
+
+    #[test]
+    fn redaction_ignores_at_signs_outside_the_authority() {
+        assert_eq!(
+            redact_url("https://host.example/path@x"),
+            "https://host.example/path@x"
+        );
+        assert_eq!(
+            redact_url("https://host.example/repo?ref=a@b"),
+            "https://host.example/repo?ref=a@b"
+        );
+        assert_eq!(
+            redact_url("https://host.example?ref=a@b"),
+            "https://host.example?ref=a@b"
+        );
+        assert_eq!(
+            redact_url("http://host.example#frag@x"),
+            "http://host.example#frag@x"
+        );
+        assert_eq!(
+            redact_url("https://alice:secret@host.example/team@org/repo.git"),
+            "https://host.example/team@org/repo.git"
         );
     }
 
