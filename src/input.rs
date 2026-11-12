@@ -136,11 +136,12 @@ enum ListKey {
 
 /// The list views bind bare letters (`a`, `d`, `r`, `j`, `k`, `/`), so a
 /// letter held with Ctrl or Alt must not fall through to them: Ctrl+D is
-/// not "delete". Ctrl+S is the only chord they know.
+/// not "delete". Ctrl+S is the only chord they know, and only with Ctrl
+/// alone: Ctrl+Alt is AltGr.
 fn list_key(code: KeyCode, modifiers: KeyModifiers) -> ListKey {
     let chord = modifiers.intersects(KeyModifiers::CONTROL | KeyModifiers::ALT);
     match code {
-        KeyCode::Char('s') if modifiers.contains(KeyModifiers::CONTROL) => ListKey::Save,
+        _ if is_save_chord(code, modifiers) => ListKey::Save,
         KeyCode::Char(_) if chord => ListKey::Unbound,
         _ => ListKey::Plain(code),
     }
@@ -1217,6 +1218,27 @@ mod tests {
                     assert!(!state.filter_focus, "{modifiers:?}+{letter}");
                 }
             }
+        }
+    }
+
+    #[test]
+    fn list_views_do_not_take_altgr_s_for_the_save_chord() {
+        let alt_gr = KeyModifiers::CONTROL | KeyModifiers::ALT;
+        assert_eq!(list_key(KeyCode::Char('s'), alt_gr), ListKey::Unbound);
+        assert_eq!(
+            list_key(KeyCode::Char('s'), KeyModifiers::CONTROL),
+            ListKey::Save
+        );
+
+        let dir = TempDir::new().expect("tempdir");
+        for view in [EditorView::Menu, EditorView::Categories, EditorView::Hosts] {
+            let mut app = editing_app(&dir);
+            let state = app.editor.as_mut().expect("editor open");
+            state.view = view;
+            state.dirty = true;
+            press_with(&mut app, KeyCode::Char('s'), alt_gr);
+            assert!(editor(&app).dirty, "{view:?}");
+            assert!(!app.config_path.exists(), "{view:?}");
         }
     }
 

@@ -209,7 +209,7 @@ fn event_loop(terminal: &mut Terminal<CrosstermBackend<Stdout>>, app: &mut App) 
             continue;
         }
 
-        if matches!(key.code, KeyCode::Char('?') | KeyCode::F(1)) && help_toggle_allowed(app) {
+        if is_help_key(key.code, key.modifiers) && help_toggle_allowed(app) {
             app.toggle_help();
             continue;
         }
@@ -236,40 +236,67 @@ fn handle_browse_key(
     code: KeyCode,
     modifiers: KeyModifiers,
 ) -> Result<Flow> {
+    match browse_key(app, code, modifiers) {
+        BrowseStep::Quit => return Ok(Flow::Quit),
+        BrowseStep::Connect => ssh_handoff(terminal, app)?,
+        BrowseStep::Handled => {}
+    }
+    Ok(Flow::Continue)
+}
+
+/// What a browse-mode key press leaves for the caller to do.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum BrowseStep {
+    Handled,
+    Quit,
+    Connect,
+}
+
+/// The letter bindings are plain keys: `plain` is false for a letter held
+/// with Ctrl or Alt, so Ctrl+E does not open the editor and Alt+Q does not
+/// quit. The Ctrl chords in turn need Ctrl without Alt, because Ctrl+Alt is
+/// how AltGr text arrives (see [`input::typed_char`]).
+fn browse_key(app: &mut App, code: KeyCode, modifiers: KeyModifiers) -> BrowseStep {
     let ctrl = modifiers.contains(KeyModifiers::CONTROL);
+    let ctrl_only = ctrl && !modifiers.contains(KeyModifiers::ALT);
+    let plain = input::typed_char(code, modifiers).is_some();
+    let searching = app.focus == Focus::Search;
     match code {
-        KeyCode::Char('c') if ctrl => return Ok(Flow::Quit),
-        KeyCode::Esc | KeyCode::Char('q') if app.focus != Focus::Search => return Ok(Flow::Quit),
-        KeyCode::Esc | KeyCode::Enter if app.focus == Focus::Search => {
+        KeyCode::Char('c') if ctrl => return BrowseStep::Quit,
+        KeyCode::Esc if !searching => return BrowseStep::Quit,
+        KeyCode::Char('q') if plain && !searching => return BrowseStep::Quit,
+        KeyCode::Esc | KeyCode::Enter if searching => {
             app.clear_search_focus_hosts();
         }
         KeyCode::Tab => app.toggle_focus(),
-        KeyCode::Char('/') => {
+        KeyCode::Char('/') if plain => {
             // `/` always starts a fresh search: when re-entering from
             // another focus with a leftover query, wipe it first so
             // keystrokes don't append to stale text.
-            if app.focus != Focus::Search && !app.search_query.is_empty() {
+            if !searching && !app.search_query.is_empty() {
                 app.clear_search_query();
             }
             app.focus_search();
         }
-        KeyCode::Char('u') if ctrl && app.focus == Focus::Search => {
+        KeyCode::Char('u') if ctrl_only && searching => {
             app.clear_search_query();
         }
-        KeyCode::Char('e') if app.focus != Focus::Search => app.enter_edit_mode(),
-        KeyCode::Up | KeyCode::Char('k') if app.focus != Focus::Search => app.previous(),
-        KeyCode::Down | KeyCode::Char('j') if app.focus != Focus::Search => app.next(),
-        KeyCode::Backspace if app.focus == Focus::Search => app.pop_search_char(),
-        KeyCode::Char('a') if ctrl => toggle_search_scope(app),
-        KeyCode::Char(_) if app.focus == Focus::Search => type_into_search(app, code, modifiers),
-        KeyCode::Char('f') if app.focus == Focus::Hosts => toggle_favorite(app),
-        KeyCode::Char('t') if app.focus == Focus::Hosts && app.terminal.is_available() => {
+        KeyCode::Char('e') if plain && !searching => app.enter_edit_mode(),
+        KeyCode::Up if !searching => app.previous(),
+        KeyCode::Char('k') if plain && !searching => app.previous(),
+        KeyCode::Down if !searching => app.next(),
+        KeyCode::Char('j') if plain && !searching => app.next(),
+        KeyCode::Backspace if searching => app.pop_search_char(),
+        KeyCode::Char('a') if ctrl_only => toggle_search_scope(app),
+        KeyCode::Char(_) if searching => type_into_search(app, code, modifiers),
+        KeyCode::Char('f') if plain && app.focus == Focus::Hosts => toggle_favorite(app),
+        KeyCode::Char('t') if plain && app.focus == Focus::Hosts && app.terminal.is_available() => {
             ssh_spawn(app);
         }
-        KeyCode::Enter if app.focus == Focus::Hosts => ssh_handoff(terminal, app)?,
+        KeyCode::Enter if app.focus == Focus::Hosts => return BrowseStep::Connect,
         _ => {}
     }
-    Ok(Flow::Continue)
+    BrowseStep::Handled
 }
 
 fn type_into_search(app: &mut App, code: KeyCode, modifiers: KeyModifiers) {
@@ -304,6 +331,10 @@ fn toggle_favorite(app: &mut App) {
         app.set_status(format!("{host_name} removed from favorites"));
     }
     app.ensure_valid_selection();
+}
+
+fn is_help_key(code: KeyCode, modifiers: KeyModifiers) -> bool {
+    code == KeyCode::F(1) || input::typed_char(code, modifiers) == Some('?')
 }
 
 /// `?` and F1 must NOT toggle the help overlay when the focused widget
@@ -901,17 +932,124 @@ mod tests {
         assert_eq!(code("local/failing", true), 0);
     }
 
-    #[test]
-    fn search_input_ignores_chords_but_keeps_altgr_text() {
-        let dir = tempfile::TempDir::new().expect("tempdir");
-        let mut app = App::new(
-            Config::default(),
+    fn browsing_app(dir: &tempfile::TempDir) -> App {
+        let config = Config {
+            categories: vec![Category {
+                name: "prod".into(),
+                icon: None,
+                hosts: ["web-01", "web-02"]
+                    .into_iter()
+                    .map(|name| Host {
+                        name: name.into(),
+                        ip: "10.0.0.1".into(),
+                        ..Host::default()
+                    })
+                    .collect(),
+            }],
+            ..Config::default()
+        };
+        App::new(
+            config,
             dir.path().join("config.yaml"),
             SyncStatus::Disabled,
             HistoryStore::load(&dir.path().join("history.yaml")),
             FavoritesStore::load(&dir.path().join("favorites.yaml")),
             TerminalLauncher::detect(None),
+        )
+    }
+
+    const CTRL_ALT: KeyModifiers = KeyModifiers::CONTROL.union(KeyModifiers::ALT);
+
+    #[test]
+    fn browse_letters_ignore_ctrl_and_alt_chords() {
+        let dir = tempfile::TempDir::new().expect("tempdir");
+        for focus in [Focus::Hosts, Focus::Categories] {
+            for modifiers in [
+                KeyModifiers::CONTROL,
+                KeyModifiers::ALT,
+                KeyModifiers::CONTROL | KeyModifiers::SHIFT,
+            ] {
+                let mut app = browsing_app(&dir);
+                app.focus = focus;
+                let selected = (app.categories_state.selected(), app.hosts_state.selected());
+                for letter in ['e', 'q', 'j', 'k', 'f', 't', '/'] {
+                    let step = browse_key(&mut app, KeyCode::Char(letter), modifiers);
+                    let context = format!("{focus:?} {modifiers:?}+{letter}");
+                    assert_eq!(step, BrowseStep::Handled, "{context}");
+                    assert_eq!(app.mode, Mode::Browse, "{context}");
+                    assert_eq!(app.focus, focus, "{context}");
+                    assert_eq!(
+                        (app.categories_state.selected(), app.hosts_state.selected()),
+                        selected,
+                        "{context}"
+                    );
+                    assert!(app.active_status().is_none(), "{context}");
+                }
+                assert!(!dir.path().join("favorites.yaml").exists());
+            }
+        }
+    }
+
+    #[test]
+    fn plain_browse_letters_and_documented_chords_still_act() {
+        let dir = tempfile::TempDir::new().expect("tempdir");
+        let none = KeyModifiers::NONE;
+
+        let mut app = browsing_app(&dir);
+        app.focus = Focus::Hosts;
+        let first = app.hosts_state.selected();
+        browse_key(&mut app, KeyCode::Char('j'), none);
+        assert_ne!(app.hosts_state.selected(), first);
+        browse_key(&mut app, KeyCode::Char('k'), none);
+        assert_eq!(app.hosts_state.selected(), first);
+        assert_eq!(
+            browse_key(&mut app, KeyCode::Enter, none),
+            BrowseStep::Connect
         );
+        assert_eq!(
+            browse_key(&mut app, KeyCode::Char('q'), none),
+            BrowseStep::Quit
+        );
+        assert_eq!(
+            browse_key(&mut app, KeyCode::Char('c'), KeyModifiers::CONTROL),
+            BrowseStep::Quit
+        );
+
+        browse_key(&mut app, KeyCode::Char('a'), KeyModifiers::CONTROL);
+        assert!(app.search_all);
+        browse_key(&mut app, KeyCode::Char('a'), CTRL_ALT);
+        assert!(app.search_all);
+
+        browse_key(&mut app, KeyCode::Char('/'), none);
+        assert_eq!(app.focus, Focus::Search);
+        for (letter, modifiers) in [('q', none), ('e', none), ('a', CTRL_ALT), ('q', CTRL_ALT)] {
+            let step = browse_key(&mut app, KeyCode::Char(letter), modifiers);
+            assert_eq!(step, BrowseStep::Handled);
+        }
+        assert_eq!(app.search_query, "qeaq");
+        browse_key(&mut app, KeyCode::Char('u'), CTRL_ALT);
+        assert_eq!(app.search_query, "qeaqu");
+        browse_key(&mut app, KeyCode::Char('u'), KeyModifiers::CONTROL);
+        assert_eq!(app.search_query, "");
+
+        browse_key(&mut app, KeyCode::Esc, none);
+        browse_key(&mut app, KeyCode::Char('e'), none);
+        assert_eq!(app.mode, Mode::Edit);
+    }
+
+    #[test]
+    fn help_key_is_a_plain_question_mark_or_f1() {
+        assert!(is_help_key(KeyCode::Char('?'), KeyModifiers::NONE));
+        assert!(is_help_key(KeyCode::Char('?'), KeyModifiers::SHIFT));
+        assert!(is_help_key(KeyCode::F(1), KeyModifiers::NONE));
+        assert!(!is_help_key(KeyCode::Char('?'), KeyModifiers::CONTROL));
+        assert!(!is_help_key(KeyCode::Char('?'), KeyModifiers::ALT));
+    }
+
+    #[test]
+    fn search_input_ignores_chords_but_keeps_altgr_text() {
+        let dir = tempfile::TempDir::new().expect("tempdir");
+        let mut app = browsing_app(&dir);
         app.focus_search();
 
         type_into_search(&mut app, KeyCode::Char('w'), KeyModifiers::NONE);

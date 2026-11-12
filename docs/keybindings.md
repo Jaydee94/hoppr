@@ -20,6 +20,8 @@
 | `Ctrl+U`             | When in Search: clear the query (stays in search focus)     |
 | `?` / `F1`           | Toggle the in-app help overlay (Esc / `q` also closes it)   |
 
+The letter keys, `/` and `?` are plain keys: pressed together with `Ctrl` or `Alt` they do nothing (`Ctrl+E` does not open the settings, `Alt+Q` does not quit). The chords are `Ctrl+C`, `Ctrl+A` and `Ctrl+U`. `Ctrl+Alt` together is how `AltGr` is reported on Windows and Linux, so such a key press counts as the character it types, not as a `Ctrl` chord.
+
 ### Virtual categories
 
 Two virtual categories appear at the top of the category list when they have content:
@@ -64,7 +66,7 @@ If the editor has unsaved changes when you press `Esc` on the settings menu, hop
 | `?` / `F1`           | Toggle the in-app help overlay (list views only)            |
 | `Esc`                | Back to the previous screen. An add / edit form is abandoned; the connection defaults and central repo sync forms are applied first (see below). |
 
-The letter keys above are plain keys: in the menu, the list views and the confirmation prompts, a letter pressed together with `Ctrl` or `Alt` is ignored (`Ctrl+D` does not delete, `Ctrl+Y` does not confirm). `Ctrl+S` and `Ctrl+C` are the only chords.
+The letter keys above are plain keys: in the menu, the list views and the confirmation prompts, a letter pressed together with `Ctrl` or `Alt` is ignored (`Ctrl+D` does not delete, `Ctrl+Y` does not confirm). `Ctrl+S` and `Ctrl+C` are the only chords; `Ctrl+Alt+S` (`AltGr+S`) does not save.
 
 Text inputs — the add / edit forms, connection defaults, the sync form, the list filters and the browse-mode search — likewise ignore a key pressed with `Ctrl` or `Alt` instead of typing its letter. `Ctrl+Alt` together is the exception: that is how `AltGr` is reported on Windows and Linux, so characters such as `@`, `{` or `\` typed through it are inserted as usual.
 
