@@ -195,8 +195,6 @@ fn event_loop(terminal: &mut Terminal<CrosstermBackend<Stdout>>, app: &mut App) 
         if key.kind != KeyEventKind::Press {
             continue;
         }
-        let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
-
         if app.show_help {
             match key.code {
                 KeyCode::Char('?' | 'q') | KeyCode::F(1) | KeyCode::Esc => {
@@ -213,7 +211,7 @@ fn event_loop(terminal: &mut Terminal<CrosstermBackend<Stdout>>, app: &mut App) 
         }
 
         let flow = match app.mode {
-            Mode::Browse => handle_browse_key(terminal, app, key.code, ctrl)?,
+            Mode::Browse => handle_browse_key(terminal, app, key.code, key.modifiers)?,
             Mode::Edit => {
                 let mut redraw = |app: &mut App| -> Result<()> {
                     terminal.draw(|frame| ui::draw(frame, app))?;
@@ -232,8 +230,9 @@ fn handle_browse_key(
     terminal: &mut Terminal<CrosstermBackend<Stdout>>,
     app: &mut App,
     code: KeyCode,
-    ctrl: bool,
+    modifiers: KeyModifiers,
 ) -> Result<Flow> {
+    let ctrl = modifiers.contains(KeyModifiers::CONTROL);
     match code {
         KeyCode::Char('c') if ctrl => return Ok(Flow::Quit),
         KeyCode::Esc | KeyCode::Char('q') if app.focus != Focus::Search => return Ok(Flow::Quit),
@@ -258,7 +257,7 @@ fn handle_browse_key(
         KeyCode::Down | KeyCode::Char('j') if app.focus != Focus::Search => app.next(),
         KeyCode::Backspace if app.focus == Focus::Search => app.pop_search_char(),
         KeyCode::Char('a') if ctrl => toggle_search_scope(app),
-        KeyCode::Char(c) if app.focus == Focus::Search => app.append_search_char(c),
+        KeyCode::Char(_) if app.focus == Focus::Search => type_into_search(app, code, modifiers),
         KeyCode::Char('f') if app.focus == Focus::Hosts => toggle_favorite(app),
         KeyCode::Char('t') if app.focus == Focus::Hosts && app.terminal.is_available() => {
             ssh_spawn(app);
@@ -267,6 +266,12 @@ fn handle_browse_key(
         _ => {}
     }
     Ok(Flow::Continue)
+}
+
+fn type_into_search(app: &mut App, code: KeyCode, modifiers: KeyModifiers) {
+    if let Some(ch) = input::typed_char(code, modifiers) {
+        app.append_search_char(ch);
+    }
 }
 
 fn toggle_search_scope(app: &mut App) {
@@ -804,6 +809,31 @@ mod tests {
             message.starts_with("Could not start hoppr-test-no-such-program: "),
             "unexpected message: {message}"
         );
+    }
+
+    #[test]
+    fn search_input_ignores_chords_but_keeps_altgr_text() {
+        let dir = tempfile::TempDir::new().expect("tempdir");
+        let mut app = App::new(
+            Config::default(),
+            dir.path().join("config.yaml"),
+            SyncStatus::Disabled,
+            HistoryStore::load(&dir.path().join("history.yaml")),
+            FavoritesStore::load(&dir.path().join("favorites.yaml")),
+            TerminalLauncher::detect(None),
+        );
+        app.focus_search();
+
+        type_into_search(&mut app, KeyCode::Char('w'), KeyModifiers::NONE);
+        type_into_search(&mut app, KeyCode::Char('x'), KeyModifiers::CONTROL);
+        type_into_search(&mut app, KeyCode::Char('y'), KeyModifiers::ALT);
+        type_into_search(&mut app, KeyCode::Char('W'), KeyModifiers::SHIFT);
+        type_into_search(
+            &mut app,
+            KeyCode::Char('@'),
+            KeyModifiers::CONTROL | KeyModifiers::ALT,
+        );
+        assert_eq!(app.search_query, "wW@");
     }
 
     const AWKWARD: &str = "q\"b\\t\tn\nc\u{7}é\u{1F680}";

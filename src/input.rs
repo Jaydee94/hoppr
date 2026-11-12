@@ -84,20 +84,10 @@ pub fn handle_editor_key(
             EditorView::Menu => handle_menu(editor, list_key(code, modifiers)),
             EditorView::Categories => handle_categories(editor, config, code, modifiers),
             EditorView::Hosts => handle_hosts(editor, config, code, modifiers),
-            EditorView::CategoryForm => {
-                if let Some(msg) = handle_category_form(editor, config, code) {
-                    editor.flash(msg);
-                }
-                Action::None
-            }
-            EditorView::HostForm => {
-                if let Some(msg) = handle_host_form(editor, config, code) {
-                    editor.flash(msg);
-                }
-                Action::None
-            }
-            EditorView::Defaults => handle_defaults(editor, config, code, ctrl),
-            EditorView::Sync => handle_sync(editor, config, code, ctrl),
+            EditorView::CategoryForm => handle_category_form(editor, config, code, modifiers),
+            EditorView::HostForm => handle_host_form(editor, config, code, modifiers),
+            EditorView::Defaults => handle_defaults(editor, config, code, modifiers),
+            EditorView::Sync => handle_sync(editor, config, code, modifiers),
         }
     };
 
@@ -154,6 +144,28 @@ fn list_key(code: KeyCode, modifiers: KeyModifiers) -> ListKey {
         KeyCode::Char(_) if chord => ListKey::Unbound,
         _ => ListKey::Plain(code),
     }
+}
+
+/// The character a key press types into a text input, if it types one.
+///
+/// A letter held with Ctrl or Alt is a chord, not text. Both together is how
+/// crossterm reports AltGr on Windows and Linux, which many keyboard layouts
+/// need for `@`, `{` or `\`, so that combination still types.
+pub fn typed_char(code: KeyCode, modifiers: KeyModifiers) -> Option<char> {
+    let KeyCode::Char(ch) = code else {
+        return None;
+    };
+    let ctrl = modifiers.contains(KeyModifiers::CONTROL);
+    let alt = modifiers.contains(KeyModifiers::ALT);
+    (ctrl == alt).then_some(ch)
+}
+
+/// Ctrl+S as the text views see it. With Alt held as well the key press is
+/// AltGr text (see [`typed_char`]), not the save chord.
+fn is_save_chord(code: KeyCode, modifiers: KeyModifiers) -> bool {
+    code == KeyCode::Char('s')
+        && modifiers.contains(KeyModifiers::CONTROL)
+        && !modifiers.contains(KeyModifiers::ALT)
 }
 
 fn handle_pending_exit(editor: &mut EditorState, code: KeyCode, chord: bool) -> Action {
@@ -226,8 +238,8 @@ fn handle_categories(
     code: KeyCode,
     modifiers: KeyModifiers,
 ) -> Action {
-    if editor.filter_focus {
-        handle_category_filter_input(editor, config, code);
+    if editor.filter_focus && !is_save_chord(code, modifiers) {
+        handle_category_filter_input(editor, config, code, modifiers);
         return Action::None;
     }
     let code = match list_key(code, modifiers) {
@@ -281,8 +293,8 @@ fn handle_hosts(
     code: KeyCode,
     modifiers: KeyModifiers,
 ) -> Action {
-    if editor.filter_focus {
-        handle_host_filter_input(editor, config, code);
+    if editor.filter_focus && !is_save_chord(code, modifiers) {
+        handle_host_filter_input(editor, config, code, modifiers);
         return Action::None;
     }
     let code = match list_key(code, modifiers) {
@@ -361,8 +373,17 @@ fn handle_defaults(
     editor: &mut EditorState,
     config: &mut Config,
     code: KeyCode,
-    ctrl: bool,
+    modifiers: KeyModifiers,
 ) -> Action {
+    if is_save_chord(code, modifiers) {
+        return match editor.apply_defaults(config) {
+            Ok(()) => Action::Save,
+            Err(err) => {
+                editor.flash(err);
+                Action::None
+            }
+        };
+    }
     let field_count = editor.defaults_inputs.len();
     match code {
         KeyCode::Esc => editor.view = EditorView::Menu,
@@ -375,18 +396,34 @@ fn handle_defaults(
         KeyCode::Backspace => {
             editor.defaults_inputs[editor.defaults_field].pop();
         }
-        KeyCode::Char('s') if ctrl => return Action::Save,
         KeyCode::Enter => match editor.apply_defaults(config) {
             Ok(()) => editor.flash("Defaults applied · Ctrl+S to save"),
             Err(err) => editor.flash(err),
         },
-        KeyCode::Char(c) => editor.defaults_inputs[editor.defaults_field].push(c),
-        _ => {}
+        _ => {
+            if let Some(ch) = typed_char(code, modifiers) {
+                editor.defaults_inputs[editor.defaults_field].push(ch);
+            }
+        }
     }
     Action::None
 }
 
-fn handle_sync(editor: &mut EditorState, config: &mut Config, code: KeyCode, ctrl: bool) -> Action {
+fn handle_sync(
+    editor: &mut EditorState,
+    config: &mut Config,
+    code: KeyCode,
+    modifiers: KeyModifiers,
+) -> Action {
+    // Same path as the [Save & push] button, so the shortcut cannot write a
+    // config that is missing what the form shows.
+    if is_save_chord(code, modifiers) {
+        return if sync_apply_form(editor, config) {
+            Action::Save
+        } else {
+            Action::None
+        };
+    }
     let is_text_field =
         !sync_field_is_bool(editor.sync_field) && !sync_field_is_button(editor.sync_field);
     match code {
@@ -400,12 +437,12 @@ fn handle_sync(editor: &mut EditorState, config: &mut Config, code: KeyCode, ctr
         KeyCode::Backspace if is_text_field => {
             editor.sync_inputs[editor.sync_field].pop();
         }
-        // Universal save shortcut — kept alongside the [Save & push] button.
-        KeyCode::Char('s') if ctrl => return Action::Save,
-        KeyCode::Char(' ') if sync_field_is_bool(editor.sync_field) => toggle_sync_field(editor),
         KeyCode::Enter => return activate_sync_field(editor, config),
-        KeyCode::Char(c) if is_text_field => editor.sync_inputs[editor.sync_field].push(c),
-        _ => {}
+        _ => match typed_char(code, modifiers) {
+            Some(' ') if sync_field_is_bool(editor.sync_field) => toggle_sync_field(editor),
+            Some(ch) if is_text_field => editor.sync_inputs[editor.sync_field].push(ch),
+            _ => {}
+        },
     }
     Action::None
 }
@@ -453,143 +490,155 @@ fn handle_category_form(
     editor: &mut EditorState,
     config: &mut Config,
     code: KeyCode,
-) -> Option<String> {
+    modifiers: KeyModifiers,
+) -> Action {
     let Some(form) = editor.category_form.as_mut() else {
         editor.view = EditorView::Categories;
-        return None;
+        return Action::None;
     };
+    let save = is_save_chord(code, modifiers);
+    if save || code == KeyCode::Enter {
+        let submitted = submit_category_form(editor, config);
+        return finish_form(editor, submitted, save);
+    }
     match code {
         KeyCode::Esc => {
             editor.category_form = None;
             editor.view = EditorView::Categories;
-            None
         }
-        KeyCode::Tab | KeyCode::Down => {
-            form.next_field();
-            None
-        }
-        KeyCode::BackTab | KeyCode::Up => {
-            form.prev_field();
-            None
-        }
-        KeyCode::Backspace => {
-            form.pop_char();
-            None
-        }
-        KeyCode::Enter => {
-            form.submitted_once = true;
-            let mut cat = if form.mode_create {
-                Category::default()
-            } else {
-                config
-                    .categories
-                    .get(form.category_index.unwrap_or(0))
-                    .cloned()
-                    .unwrap_or_default()
-            };
-            if let Err(err) = form.apply(&mut cat) {
-                return Some(err);
+        KeyCode::Tab | KeyCode::Down => form.next_field(),
+        KeyCode::BackTab | KeyCode::Up => form.prev_field(),
+        KeyCode::Backspace => form.pop_char(),
+        _ => {
+            if let Some(ch) = typed_char(code, modifiers) {
+                form.push_char(ch);
             }
-            if form.mode_create {
-                config.categories.push(cat);
-            } else if let Some(i) = form.category_index
-                && let Some(slot) = config.categories.get_mut(i)
-            {
-                if slot.name != cat.name {
-                    editor.pending_renames.push(Rename::Category {
-                        from: slot.name.clone(),
-                        to: cat.name.clone(),
-                    });
-                }
-                *slot = cat;
-            }
-            let created = form.mode_create;
-            editor.dirty = true;
-            editor.category_form = None;
-            editor.view = EditorView::Categories;
-            Some(if created {
-                "Category added · Ctrl+S to save".into()
-            } else {
-                "Category updated · Ctrl+S to save".into()
-            })
         }
-        KeyCode::Char(c) => {
-            form.push_char(c);
-            None
-        }
-        _ => None,
     }
+    Action::None
+}
+
+/// Report a form submission: a rejected form shows its validation error and
+/// stays open, an accepted one is either written to disk right away (`save`)
+/// or left pending with a reminder of the key that writes it.
+fn finish_form(editor: &mut EditorState, submitted: Result<&str, String>, save: bool) -> Action {
+    match submitted {
+        Ok(_) if save => return Action::Save,
+        Ok(done) => editor.flash(format!("{done} · Ctrl+S to save")),
+        Err(err) => editor.flash(err),
+    }
+    Action::None
+}
+
+fn submit_category_form(
+    editor: &mut EditorState,
+    config: &mut Config,
+) -> Result<&'static str, String> {
+    let Some(form) = editor.category_form.as_mut() else {
+        return Err("No category form is open".into());
+    };
+    form.submitted_once = true;
+    let mut cat = if form.mode_create {
+        Category::default()
+    } else {
+        config
+            .categories
+            .get(form.category_index.unwrap_or(0))
+            .cloned()
+            .unwrap_or_default()
+    };
+    form.apply(&mut cat)?;
+    let created = form.mode_create;
+    if created {
+        config.categories.push(cat);
+    } else if let Some(i) = form.category_index
+        && let Some(slot) = config.categories.get_mut(i)
+    {
+        if slot.name != cat.name {
+            editor.pending_renames.push(Rename::Category {
+                from: slot.name.clone(),
+                to: cat.name.clone(),
+            });
+        }
+        *slot = cat;
+    }
+    editor.dirty = true;
+    editor.category_form = None;
+    editor.view = EditorView::Categories;
+    Ok(if created {
+        "Category added"
+    } else {
+        "Category updated"
+    })
 }
 
 fn handle_host_form(
     editor: &mut EditorState,
     config: &mut Config,
     code: KeyCode,
-) -> Option<String> {
+    modifiers: KeyModifiers,
+) -> Action {
     let Some(form) = editor.host_form.as_mut() else {
         editor.view = EditorView::Hosts;
-        return None;
+        return Action::None;
     };
+    let save = is_save_chord(code, modifiers);
+    if save || code == KeyCode::Enter {
+        let submitted = submit_host_form(editor, config);
+        return finish_form(editor, submitted, save);
+    }
     match code {
         KeyCode::Esc => {
             editor.host_form = None;
             editor.view = EditorView::Hosts;
-            None
         }
-        KeyCode::Tab | KeyCode::Down => {
-            form.next_field();
-            None
-        }
-        KeyCode::BackTab | KeyCode::Up => {
-            form.prev_field();
-            None
-        }
-        KeyCode::Backspace => {
-            form.pop_char();
-            None
-        }
-        KeyCode::Enter => {
-            form.submitted_once = true;
-            let host = match form.to_host() {
-                Ok(h) => h,
-                Err(err) => return Some(err),
-            };
-            if form.mode_create {
-                if let Some(cat) = config.categories.get_mut(form.category_index) {
-                    cat.hosts.push(host);
-                }
-            } else if let (Some(cat), Some(idx)) = (
-                config.categories.get_mut(form.category_index),
-                form.host_index,
-            ) && let Some(slot) = cat.hosts.get_mut(idx)
-            {
-                if slot.name != host.name || slot.ip != host.ip {
-                    editor.pending_renames.push(Rename::Host {
-                        category: cat.name.clone(),
-                        from_name: slot.name.clone(),
-                        from_ip: slot.ip.clone(),
-                        to_name: host.name.clone(),
-                        to_ip: host.ip.clone(),
-                    });
-                }
-                *slot = host;
+        KeyCode::Tab | KeyCode::Down => form.next_field(),
+        KeyCode::BackTab | KeyCode::Up => form.prev_field(),
+        KeyCode::Backspace => form.pop_char(),
+        _ => {
+            if let Some(ch) = typed_char(code, modifiers) {
+                form.push_char(ch);
             }
-            let created = form.mode_create;
-            editor.dirty = true;
-            editor.host_form = None;
-            editor.view = EditorView::Hosts;
-            Some(if created {
-                "Host added · Ctrl+S to save".into()
-            } else {
-                "Host updated · Ctrl+S to save".into()
-            })
         }
-        KeyCode::Char(c) => {
-            form.push_char(c);
-            None
-        }
-        _ => None,
     }
+    Action::None
+}
+
+fn submit_host_form(editor: &mut EditorState, config: &mut Config) -> Result<&'static str, String> {
+    let Some(form) = editor.host_form.as_mut() else {
+        return Err("No host form is open".into());
+    };
+    form.submitted_once = true;
+    let host = form.to_host()?;
+    let created = form.mode_create;
+    if created {
+        if let Some(cat) = config.categories.get_mut(form.category_index) {
+            cat.hosts.push(host);
+        }
+    } else if let (Some(cat), Some(idx)) = (
+        config.categories.get_mut(form.category_index),
+        form.host_index,
+    ) && let Some(slot) = cat.hosts.get_mut(idx)
+    {
+        if slot.name != host.name || slot.ip != host.ip {
+            editor.pending_renames.push(Rename::Host {
+                category: cat.name.clone(),
+                from_name: slot.name.clone(),
+                from_ip: slot.ip.clone(),
+                to_name: host.name.clone(),
+                to_ip: host.ip.clone(),
+            });
+        }
+        *slot = host;
+    }
+    editor.dirty = true;
+    editor.host_form = None;
+    editor.view = EditorView::Hosts;
+    Ok(if created {
+        "Host added"
+    } else {
+        "Host updated"
+    })
 }
 
 /// Move the categories selection one step over the *visible*
@@ -631,7 +680,12 @@ fn step_visible<T>(visible: &[(usize, T)], current: usize, step: Step) -> Option
     Some(visible[next].0)
 }
 
-fn handle_category_filter_input(editor: &mut EditorState, config: &Config, code: KeyCode) {
+fn handle_category_filter_input(
+    editor: &mut EditorState,
+    config: &Config,
+    code: KeyCode,
+    modifiers: KeyModifiers,
+) {
     match code {
         KeyCode::Esc => {
             editor.filter_focus = false;
@@ -647,21 +701,27 @@ fn handle_category_filter_input(editor: &mut EditorState, config: &Config, code:
                 buf.pop();
             }
         }
-        KeyCode::Char(c) => {
-            editor
-                .category_filter
-                .get_or_insert_with(String::new)
-                .push(c);
-            // Keep the highlight on something visible while the query narrows.
-            if let Some((first_index, _)) = editor.visible_categories(config).first() {
-                editor.categories_index = *first_index;
+        _ => {
+            if let Some(ch) = typed_char(code, modifiers) {
+                editor
+                    .category_filter
+                    .get_or_insert_with(String::new)
+                    .push(ch);
+                // Keep the highlight on something visible while the query narrows.
+                if let Some((first_index, _)) = editor.visible_categories(config).first() {
+                    editor.categories_index = *first_index;
+                }
             }
         }
-        _ => {}
     }
 }
 
-fn handle_host_filter_input(editor: &mut EditorState, config: &Config, code: KeyCode) {
+fn handle_host_filter_input(
+    editor: &mut EditorState,
+    config: &Config,
+    code: KeyCode,
+    modifiers: KeyModifiers,
+) {
     match code {
         KeyCode::Esc => {
             editor.filter_focus = false;
@@ -677,13 +737,14 @@ fn handle_host_filter_input(editor: &mut EditorState, config: &Config, code: Key
                 buf.pop();
             }
         }
-        KeyCode::Char(c) => {
-            editor.host_filter.get_or_insert_with(String::new).push(c);
-            if let Some((first_index, _)) = editor.visible_hosts(config).first() {
-                editor.hosts_index = *first_index;
+        _ => {
+            if let Some(ch) = typed_char(code, modifiers) {
+                editor.host_filter.get_or_insert_with(String::new).push(ch);
+                if let Some((first_index, _)) = editor.visible_hosts(config).first() {
+                    editor.hosts_index = *first_index;
+                }
             }
         }
-        _ => {}
     }
 }
 
@@ -867,8 +928,8 @@ mod tests {
 
     use super::*;
     use crate::{
-        app::Mode, config::Host, favorites::FavoritesStore, history::HistoryStore,
-        terminal::TerminalLauncher,
+        app::Mode, config::Host, editor::SYNC_BRANCH, favorites::FavoritesStore,
+        history::HistoryStore, terminal::TerminalLauncher,
     };
 
     fn editing_app(dir: &TempDir) -> App {
@@ -1131,6 +1192,224 @@ mod tests {
         press_with(&mut app, KeyCode::Char('y'), KeyModifiers::CONTROL);
         assert_eq!(app.config.categories[0].hosts.len(), 1);
         assert!(editor(&app).pending_delete.is_none());
+    }
+
+    fn ctrl_s(app: &mut App) {
+        press_with(app, KeyCode::Char('s'), KeyModifiers::CONTROL);
+    }
+
+    fn flash_of(app: &App) -> &str {
+        editor(app).flash.as_deref().unwrap_or_default()
+    }
+
+    #[test]
+    fn ctrl_s_in_defaults_applies_the_typed_form_before_saving() {
+        let dir = TempDir::new().expect("tempdir");
+        let mut app = editing_app(&dir);
+        let state = app.editor.as_mut().expect("editor open");
+        state.view = EditorView::Defaults;
+        state.defaults_field = 1;
+        retype(&mut app, 2, "2200");
+
+        ctrl_s(&mut app);
+        assert_eq!(flash_of(&app), "Saved");
+        assert!(!editor(&app).dirty);
+        let on_disk = Config::load_from_path(&app.config_path).expect("saved config");
+        assert_eq!(on_disk.defaults.port, 2200);
+    }
+
+    #[test]
+    fn ctrl_s_in_defaults_reports_an_invalid_form_instead_of_saving() {
+        let dir = TempDir::new().expect("tempdir");
+        let mut app = editing_app(&dir);
+        let state = app.editor.as_mut().expect("editor open");
+        state.view = EditorView::Defaults;
+        state.defaults_field = 1;
+        retype(&mut app, 2, "ssh");
+
+        ctrl_s(&mut app);
+        assert_eq!(flash_of(&app), "Port must be a number 0-65535");
+        assert!(!app.config_path.exists());
+        assert_eq!(app.config.defaults.port, 22);
+        assert_eq!(editor(&app).defaults_inputs[1], "ssh");
+    }
+
+    #[test]
+    fn ctrl_s_in_sync_applies_the_typed_form_before_saving() {
+        let dir = TempDir::new().expect("tempdir");
+        let mut app = editing_app(&dir);
+        open_sync_form(&mut app, &dir, SYNC_BRANCH);
+        retype(&mut app, 0, "trunk");
+
+        ctrl_s(&mut app);
+        assert_eq!(flash_of(&app), "Saved");
+        let on_disk = Config::load_from_path(&app.config_path).expect("saved config");
+        let sync_cfg = on_disk.sync.expect("sync stanza saved");
+        assert_eq!(sync_cfg.branch.as_deref(), Some("trunk"));
+        assert_eq!(
+            sync_cfg.repo.as_deref(),
+            Some(editor(&app).sync_inputs[SYNC_REPO].as_str())
+        );
+    }
+
+    #[test]
+    fn ctrl_s_in_sync_reports_an_invalid_form_instead_of_saving() {
+        let dir = TempDir::new().expect("tempdir");
+        let mut app = editing_app(&dir);
+        open_sync_form(&mut app, &dir, SYNC_BRANCH);
+        app.editor.as_mut().expect("editor open").sync_inputs[SYNC_AUTO_PUSH] = "maybe".into();
+
+        ctrl_s(&mut app);
+        assert_eq!(flash_of(&app), "invalid boolean: maybe");
+        assert!(!app.config_path.exists());
+        assert!(app.config.sync.is_none());
+    }
+
+    #[test]
+    fn ctrl_s_in_a_form_submits_it_and_saves() {
+        let dir = TempDir::new().expect("tempdir");
+        let mut app = editing_app(&dir);
+        press(&mut app, KeyCode::Down);
+        press(&mut app, KeyCode::Enter);
+        press(&mut app, KeyCode::Char('a'));
+        retype(&mut app, 0, "db");
+        press(&mut app, KeyCode::Tab);
+        retype(&mut app, 0, "10.0.0.2");
+
+        ctrl_s(&mut app);
+        assert_eq!(editor(&app).view, EditorView::Hosts);
+        assert_eq!(flash_of(&app), "Saved");
+        let on_disk = Config::load_from_path(&app.config_path).expect("saved config");
+        let names: Vec<_> = on_disk.categories[0]
+            .hosts
+            .iter()
+            .map(|host| host.name.as_str())
+            .collect();
+        assert_eq!(names, ["gateway", "db"]);
+
+        press(&mut app, KeyCode::Esc);
+        press(&mut app, KeyCode::Up);
+        press(&mut app, KeyCode::Enter);
+        press(&mut app, KeyCode::Char('a'));
+        retype(&mut app, 0, "lab");
+        ctrl_s(&mut app);
+        assert_eq!(editor(&app).view, EditorView::Categories);
+        let on_disk = Config::load_from_path(&app.config_path).expect("saved config");
+        assert_eq!(on_disk.categories[1].name, "lab");
+    }
+
+    #[test]
+    fn ctrl_s_in_an_invalid_form_keeps_it_open_and_saves_nothing() {
+        let dir = TempDir::new().expect("tempdir");
+        let mut app = editing_app(&dir);
+        press(&mut app, KeyCode::Down);
+        press(&mut app, KeyCode::Enter);
+        press(&mut app, KeyCode::Char('a'));
+        retype(&mut app, 0, "db");
+
+        ctrl_s(&mut app);
+        assert_eq!(editor(&app).view, EditorView::HostForm);
+        assert_eq!(flash_of(&app), "IP / host is required");
+        assert!(!app.config_path.exists());
+        assert_eq!(app.config.categories[0].hosts.len(), 1);
+        let form = editor(&app).host_form.as_ref().expect("form still open");
+        assert_eq!(form.fields[0], "db");
+    }
+
+    const UNBOUND_CHORDS: [(char, KeyModifiers); 4] = [
+        ('s', KeyModifiers::ALT),
+        ('x', KeyModifiers::CONTROL),
+        ('x', KeyModifiers::ALT),
+        ('X', KeyModifiers::CONTROL.union(KeyModifiers::SHIFT)),
+    ];
+    const ALT_GR: KeyModifiers = KeyModifiers::CONTROL.union(KeyModifiers::ALT);
+
+    fn type_chords_then_altgr(app: &mut App) {
+        for (letter, modifiers) in UNBOUND_CHORDS {
+            press_with(app, KeyCode::Char(letter), modifiers);
+        }
+        press_with(app, KeyCode::Char('@'), ALT_GR);
+        press_with(app, KeyCode::Char('s'), ALT_GR);
+        press_with(app, KeyCode::Char('Q'), KeyModifiers::SHIFT);
+    }
+
+    #[test]
+    fn text_inputs_ignore_unbound_chords_but_keep_altgr_text() {
+        let dir = TempDir::new().expect("tempdir");
+
+        let mut app = editing_app(&dir);
+        press(&mut app, KeyCode::Down);
+        press(&mut app, KeyCode::Enter);
+        press(&mut app, KeyCode::Char('a'));
+        type_chords_then_altgr(&mut app);
+        let form = editor(&app).host_form.as_ref().expect("host form open");
+        assert_eq!(form.fields[0], "@sQ");
+
+        let mut app = editing_app(&dir);
+        press(&mut app, KeyCode::Enter);
+        press(&mut app, KeyCode::Char('a'));
+        type_chords_then_altgr(&mut app);
+        let form = editor(&app)
+            .category_form
+            .as_ref()
+            .expect("category form open");
+        assert_eq!(form.fields[0], "@sQ");
+
+        let mut app = editing_app(&dir);
+        let state = app.editor.as_mut().expect("editor open");
+        state.view = EditorView::Defaults;
+        state.defaults_field = 2;
+        type_chords_then_altgr(&mut app);
+        assert_eq!(editor(&app).defaults_inputs[2], "@sQ");
+
+        let mut app = editing_app(&dir);
+        let state = app.editor.as_mut().expect("editor open");
+        state.view = EditorView::Sync;
+        state.sync_field = SYNC_BRANCH;
+        type_chords_then_altgr(&mut app);
+        assert_eq!(editor(&app).sync_inputs[SYNC_BRANCH], "@sQ");
+
+        for view in [EditorView::Categories, EditorView::Hosts] {
+            let mut app = editing_app(&dir);
+            app.editor.as_mut().expect("editor open").view = view;
+            press(&mut app, KeyCode::Char('/'));
+            type_chords_then_altgr(&mut app);
+            let state = editor(&app);
+            let filter = if view == EditorView::Categories {
+                &state.category_filter
+            } else {
+                &state.host_filter
+            };
+            assert_eq!(filter.as_deref(), Some("@sQ"), "{view:?}");
+        }
+        assert!(!dir.path().join("config.yaml").exists());
+    }
+
+    #[test]
+    fn ctrl_s_saves_while_a_list_filter_is_focused() {
+        let dir = TempDir::new().expect("tempdir");
+        let mut app = editing_app(&dir);
+        let state = app.editor.as_mut().expect("editor open");
+        state.view = EditorView::Hosts;
+        state.dirty = true;
+        press(&mut app, KeyCode::Char('/'));
+        press(&mut app, KeyCode::Char('g'));
+
+        ctrl_s(&mut app);
+        assert!(app.config_path.exists());
+        assert_eq!(editor(&app).host_filter.as_deref(), Some("g"));
+        assert!(editor(&app).filter_focus);
+    }
+
+    #[test]
+    fn sync_toggle_ignores_chorded_space() {
+        let dir = TempDir::new().expect("tempdir");
+        let mut app = editing_app(&dir);
+        let state = app.editor.as_mut().expect("editor open");
+        state.view = EditorView::Sync;
+        state.sync_field = SYNC_AUTO_PULL;
+        press_with(&mut app, KeyCode::Char(' '), KeyModifiers::CONTROL);
+        assert_eq!(editor(&app).sync_inputs[SYNC_AUTO_PULL], "");
     }
 
     fn retype(app: &mut App, erase: usize, text: &str) {

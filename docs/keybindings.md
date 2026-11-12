@@ -58,11 +58,13 @@ If the editor has unsaved changes when you press `Esc` on the settings menu, hop
 | `d`                  | Request deletion of the selected item (prompts `y/n`)       |
 | `y` / `n`            | Confirm / cancel a pending delete prompt                    |
 | `/`                  | Filter the current list (Categories / Hosts) by name        |
-| `Ctrl+S`             | Save the config to disk (menu, list, defaults and sync views — not while an add / edit form is open; confirm the form with `Enter` first). Plain `s` only saves inside the unsaved-changes prompt. |
+| `Ctrl+S`             | Save the config to disk (every editor view). In a form view — add / edit, connection defaults, central repo sync — the form is applied first; if it does not validate, the error is shown and nothing is written. Plain `s` only saves inside the unsaved-changes prompt. |
 | `?` / `F1`           | Toggle the in-app help overlay (list views only)            |
 | `Esc`                | Back to the previous screen                                 |
 
 The letter keys above are plain keys: in the menu, the list views and the confirmation prompts, a letter pressed together with `Ctrl` or `Alt` is ignored (`Ctrl+D` does not delete, `Ctrl+Y` does not confirm). `Ctrl+S` and `Ctrl+C` are the only chords.
+
+Text inputs — the add / edit forms, connection defaults, the sync form, the list filters and the browse-mode search — likewise ignore a key pressed with `Ctrl` or `Alt` instead of typing its letter. `Ctrl+Alt` together is the exception: that is how `AltGr` is reported on Windows and Linux, so characters such as `@`, `{` or `\` typed through it are inserted as usual.
 
 ### Filter input (Categories / Hosts)
 
@@ -86,8 +88,8 @@ The letter keys above are plain keys: in the menu, the list views and the confir
 
 - **Manage categories** — list, add (`a`), rename (`r` / `Enter`), delete (`d` then confirm with `y`).
 - **Manage hosts** — `Tab` / `Shift+Tab` cycle to the next / previous category. Use `↑↓` (or `j`/`k`) to move within the host list. Same `a/r/d` semantics; `d` opens a `y/n` confirmation modal so a stray keypress can't wipe an entry.
-- **Connection defaults** — edit `defaults.command` (program), default port, default user.
-- **Central repo sync** — edit the `sync.*` block. Tab/↑↓ moves through the six form fields and the three action buttons underneath; `Space` toggles `auto-pull` / `auto-push`; `Enter` either applies the form (text fields), flips the toggle (booleans), or fires the button. `Ctrl+S` writes the config as last applied.
+- **Connection defaults** — edit `defaults.command` (program), default port, default user. `Enter` applies the form; `Ctrl+S` applies it and writes the config to disk.
+- **Central repo sync** — edit the `sync.*` block. Tab/↑↓ moves through the six form fields and the three action buttons underneath; `Space` toggles `auto-pull` / `auto-push`; `Enter` either applies the form (text fields), flips the toggle (booleans), or fires the button. `Ctrl+S` applies the form and saves, like the `[Save & push]` button.
 
 ### Sync editor controls
 
@@ -100,12 +102,12 @@ The letter keys above are plain keys: in the menu, the list views and the confir
 | `[Test]`                 | Read-only probe — `ls-remote` against the URL currently in the form    |
 | `[Pull now]`             | Apply the form, then clone or fast-forward pull (no local write)       |
 | `[Save & push]`          | Apply the form, write the local config to disk, push if `auto_push`    |
-| `Ctrl+S`                 | Write the config as last applied (unlike `[Save & push]` it does not apply the form first — press `Enter` on a field for that) |
+| `Ctrl+S`                 | Same as the `[Save & push]` button, from any field                     |
 | `Esc`                    | Back to the settings menu                                              |
 
 ## Mnemonics
 
 - `e` for **edit** — opens settings.
-- `Ctrl+S` for **save** — flush to disk (every editor view except an open add / edit form).
+- `Ctrl+S` for **save** — flush to disk (works in every editor view; an open form is applied first).
 - `r` for **rename / replace** — also acts as "edit selected".
 - `/` from many TUIs you've used before.

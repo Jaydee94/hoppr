@@ -112,18 +112,23 @@ const HINTS_HOSTS: &[KeyHint] = &[
     ("⌃s", "Save"),
     ("Esc", "Back"),
 ];
-const HINTS_FORM: &[KeyHint] = &[("↑↓", "Move"), ("↩", "Confirm"), ("Esc", "Cancel")];
+const HINTS_FORM: &[KeyHint] = &[
+    ("↑↓", "Move"),
+    ("↩", "Confirm"),
+    ("⌃s", "Confirm + save"),
+    ("Esc", "Cancel"),
+];
 const HINTS_DEFAULTS: &[KeyHint] = &[
     ("↑↓", "Move"),
     ("↩", "Apply"),
-    ("⌃s", "Save"),
+    ("⌃s", "Apply + save"),
     ("Esc", "Back"),
 ];
 const HINTS_SYNC: &[KeyHint] = &[
     ("↑↓", "Move"),
     ("Space", "Toggle"),
     ("↩", "Apply / activate"),
-    ("⌃s", "Save"),
+    ("⌃s", "Apply + save"),
     ("Esc", "Back"),
 ];
 
@@ -164,6 +169,7 @@ const HELP_FORMS: &[KeyHint] = &[
     ("↑ ↓", "Next / previous field"),
     ("Backspace", "Delete char"),
     ("Enter", "Confirm"),
+    ("Ctrl+S", "Confirm and save to disk"),
     ("Esc", "Cancel"),
 ];
 
@@ -722,7 +728,7 @@ fn editor_footer<'a>(editor: &'a EditorState, theme: &Theme) -> Line<'a> {
         ]);
     }
     let (marker_color, fallback) = if editor.dirty {
-        (theme.warning, unsaved_reminder(editor.view))
+        (theme.warning, "Unsaved changes — press Ctrl+S to save")
     } else {
         (theme.success, "Saved")
     };
@@ -730,19 +736,6 @@ fn editor_footer<'a>(editor: &'a EditorState, theme: &Theme) -> Line<'a> {
         Span::styled("● ", marker_color),
         Span::styled(editor.flash.as_deref().unwrap_or(fallback), theme.text_dim),
     ])
-}
-
-/// Ctrl+S is not bound while an add/edit form is open — the form has to be
-/// confirmed first — so the reminder only names the key where it works.
-fn unsaved_reminder(view: EditorView) -> &'static str {
-    match view {
-        EditorView::CategoryForm | EditorView::HostForm => "Unsaved changes",
-        EditorView::Menu
-        | EditorView::Categories
-        | EditorView::Hosts
-        | EditorView::Defaults
-        | EditorView::Sync => "Unsaved changes — press Ctrl+S to save",
-    }
 }
 
 fn draw_pending_exit_modal(frame: &mut Frame<'_>, theme: &Theme, area: Rect) {
@@ -1174,33 +1167,26 @@ mod tests {
     };
 
     #[test]
-    fn unsaved_footer_names_ctrl_s_only_where_it_is_bound() {
+    fn unsaved_footer_names_ctrl_s_in_every_view() {
         let theme = super::Theme::midnight();
         let mut editor = crate::editor::EditorState::from_config(&Config::default());
         editor.dirty = true;
-        let footer_text = |editor: &crate::editor::EditorState| -> String {
-            super::editor_footer(editor, &theme)
-                .spans
-                .iter()
-                .map(|span| span.content.as_ref())
-                .collect()
-        };
-
         for view in [
             EditorView::Menu,
             EditorView::Categories,
             EditorView::Hosts,
+            EditorView::CategoryForm,
+            EditorView::HostForm,
             EditorView::Defaults,
             EditorView::Sync,
         ] {
             editor.view = view;
-            let text = footer_text(&editor);
+            let text: String = super::editor_footer(&editor, &theme)
+                .spans
+                .iter()
+                .map(|span| span.content.as_ref())
+                .collect();
             assert!(text.contains("press Ctrl+S to save"), "{view:?}: {text}");
-        }
-        for view in [EditorView::CategoryForm, EditorView::HostForm] {
-            editor.view = view;
-            let text = footer_text(&editor);
-            assert!(!text.contains("to save"), "{view:?}: {text}");
         }
     }
 
