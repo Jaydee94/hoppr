@@ -60,7 +60,7 @@ pub fn handle_editor_key(
 ) -> Result<Flow> {
     let ctrl = modifiers.contains(KeyModifiers::CONTROL);
     let chord = modifiers.intersects(KeyModifiers::CONTROL | KeyModifiers::ALT);
-    if ctrl && matches!(code, KeyCode::Char('c')) {
+    if ctrl && !modifiers.contains(KeyModifiers::ALT) && matches!(code, KeyCode::Char('c')) {
         return Ok(Flow::Quit);
     }
     let Some(editor) = app.editor.as_mut() else {
@@ -1128,6 +1128,15 @@ mod tests {
         let mut app = editing_app(&dir);
         let flow = press_with(&mut app, KeyCode::Char('c'), KeyModifiers::CONTROL);
         assert_eq!(flow, Flow::Quit);
+    }
+
+    #[test]
+    fn altgr_c_does_not_quit_the_editor() {
+        let dir = TempDir::new().expect("tempdir");
+        let mut app = editing_app(&dir);
+        let altgr = KeyModifiers::CONTROL | KeyModifiers::ALT;
+        let flow = press_with(&mut app, KeyCode::Char('c'), altgr);
+        assert_eq!(flow, Flow::Continue);
     }
 
     #[test]

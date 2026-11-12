@@ -262,7 +262,7 @@ fn browse_key(app: &mut App, code: KeyCode, modifiers: KeyModifiers) -> BrowseSt
     let plain = input::typed_char(code, modifiers).is_some();
     let searching = app.focus == Focus::Search;
     match code {
-        KeyCode::Char('c') if ctrl => return BrowseStep::Quit,
+        KeyCode::Char('c') if ctrl_only => return BrowseStep::Quit,
         KeyCode::Esc if !searching => return BrowseStep::Quit,
         KeyCode::Char('q') if plain && !searching => return BrowseStep::Quit,
         KeyCode::Esc | KeyCode::Enter if searching => {
@@ -1010,6 +1010,10 @@ mod tests {
         assert_eq!(
             browse_key(&mut app, KeyCode::Char('q'), none),
             BrowseStep::Quit
+        );
+        assert_eq!(
+            browse_key(&mut app, KeyCode::Char('c'), CTRL_ALT),
+            BrowseStep::Handled
         );
         assert_eq!(
             browse_key(&mut app, KeyCode::Char('c'), KeyModifiers::CONTROL),
