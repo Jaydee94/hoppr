@@ -248,6 +248,23 @@ pub enum PendingDelete {
     },
 }
 
+/// An identity change made in the editor that the name-keyed stores
+/// (favorites, history) have to follow.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Rename {
+    Category {
+        from: String,
+        to: String,
+    },
+    Host {
+        category: String,
+        from_name: String,
+        from_ip: String,
+        to_name: String,
+        to_ip: String,
+    },
+}
+
 #[derive(Debug, Clone)]
 pub struct EditorState {
     pub view: EditorView,
@@ -268,6 +285,10 @@ pub struct EditorState {
     /// prompt instead of silently writing the config to disk.
     pub pending_exit: bool,
     pub pending_delete: Option<PendingDelete>,
+    /// Renames made since the last save, oldest first. They are replayed
+    /// onto favorites and history only when the config is written, so a
+    /// discarded edit leaves those stores pointing at the names on disk.
+    pub pending_renames: Vec<Rename>,
     pub category_filter: Option<String>,
     pub host_filter: Option<String>,
     pub filter_focus: bool,
@@ -331,6 +352,7 @@ impl EditorState {
             flash: None,
             pending_exit: false,
             pending_delete: None,
+            pending_renames: Vec::new(),
             category_filter: None,
             host_filter: None,
             filter_focus: false,

@@ -58,6 +58,33 @@ impl FavoritesStore {
         self.favorites.is_empty()
     }
 
+    /// Carry a star over to a host's new name. Returns `true` if a star moved.
+    pub fn rename_host(&mut self, category: &str, old_host: &str, new_host: &str) -> bool {
+        if !self.favorites.remove(&Self::key(category, old_host)) {
+            return false;
+        }
+        self.favorites.insert(Self::key(category, new_host));
+        true
+    }
+
+    /// Carry every star in a category over to the category's new name.
+    /// Returns `true` if any star moved.
+    pub fn rename_category(&mut self, old_category: &str, new_category: &str) -> bool {
+        let old_prefix = Self::key(old_category, "");
+        let moved: Vec<String> = self
+            .favorites
+            .iter()
+            .filter(|key| key.starts_with(&old_prefix))
+            .cloned()
+            .collect();
+        for key in &moved {
+            self.favorites.remove(key);
+            self.favorites
+                .insert(Self::key(new_category, &key[old_prefix.len()..]));
+        }
+        !moved.is_empty()
+    }
+
     pub fn save(&self) -> Result<()> {
         let file = FavoritesFile {
             favorites: self.favorites.clone(),
@@ -103,6 +130,48 @@ mod tests {
         assert!(store.is_favorite("prod", "web-01"));
         assert!(!store.toggle("prod", "web-01"));
         assert!(!store.is_favorite("prod", "web-01"));
+    }
+
+    #[test]
+    fn rename_host_moves_the_star() {
+        let tmp = TempDir::new().unwrap();
+        let mut store = FavoritesStore::load(&tmp.path().join("favorites.yaml"));
+        store.toggle("prod", "web-01");
+        store.toggle("prod", "db-01");
+
+        assert!(store.rename_host("prod", "web-01", "web-a"));
+        assert!(store.is_favorite("prod", "web-a"));
+        assert!(!store.is_favorite("prod", "web-01"));
+        assert!(store.is_favorite("prod", "db-01"));
+    }
+
+    #[test]
+    fn rename_host_ignores_unstarred_hosts_and_other_categories() {
+        let tmp = TempDir::new().unwrap();
+        let mut store = FavoritesStore::load(&tmp.path().join("favorites.yaml"));
+        store.toggle("prod", "web-01");
+
+        assert!(!store.rename_host("prod", "db-01", "db-a"));
+        assert!(!store.rename_host("lab", "web-01", "web-a"));
+        assert!(!store.is_favorite("prod", "db-a"));
+        assert!(!store.is_favorite("lab", "web-a"));
+        assert!(store.is_favorite("prod", "web-01"));
+    }
+
+    #[test]
+    fn rename_category_moves_only_that_categorys_stars() {
+        let tmp = TempDir::new().unwrap();
+        let mut store = FavoritesStore::load(&tmp.path().join("favorites.yaml"));
+        store.toggle("prod", "web-01");
+        store.toggle("prod", "db-01");
+        store.toggle("prod-eu", "web-01");
+
+        assert!(store.rename_category("prod", "live"));
+        assert!(store.is_favorite("live", "web-01"));
+        assert!(store.is_favorite("live", "db-01"));
+        assert!(!store.is_favorite("prod", "web-01"));
+        assert!(store.is_favorite("prod-eu", "web-01"));
+        assert!(!store.rename_category("prod", "other"));
     }
 
     #[test]

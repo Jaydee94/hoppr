@@ -13,9 +13,9 @@ use crate::{
     app::App,
     config::{Category, Config, Inventory},
     editor::{
-        CategoryForm, EditorState, EditorView, HostForm, MENU_ITEMS, PendingDelete, SYNC_AUTO_PULL,
-        SYNC_AUTO_PUSH, SYNC_BTN_SAVE, SYNC_BTN_SYNC, SYNC_BTN_TEST, SYNC_ELEMENT_COUNT, SYNC_REPO,
-        sync_field_is_bool, sync_field_is_button,
+        CategoryForm, EditorState, EditorView, HostForm, MENU_ITEMS, PendingDelete, Rename,
+        SYNC_AUTO_PULL, SYNC_AUTO_PUSH, SYNC_BTN_SAVE, SYNC_BTN_SYNC, SYNC_BTN_TEST,
+        SYNC_ELEMENT_COUNT, SYNC_REPO, sync_field_is_bool, sync_field_is_button,
     },
     sync::{self, SyncContext, SyncStatus},
 };
@@ -119,6 +119,10 @@ fn perform(app: &mut App, action: Action, redraw: &mut Redraw<'_>) -> Result<()>
             // simply drop the in-memory edits via exit_edit_mode below.
             if let Ok(cfg) = Config::load_from_path(&app.config_path) {
                 app.config = cfg;
+            } else {
+                // Without a file to reload, the edited config stays live, so
+                // the stores have to follow its renames after all.
+                migrate_renamed_entries(app);
             }
             app.exit_edit_mode();
         }
@@ -491,6 +495,12 @@ fn handle_category_form(
             } else if let Some(i) = form.category_index
                 && let Some(slot) = config.categories.get_mut(i)
             {
+                if slot.name != cat.name {
+                    editor.pending_renames.push(Rename::Category {
+                        from: slot.name.clone(),
+                        to: cat.name.clone(),
+                    });
+                }
                 *slot = cat;
             }
             let created = form.mode_create;
@@ -553,6 +563,15 @@ fn handle_host_form(
                 form.host_index,
             ) && let Some(slot) = cat.hosts.get_mut(idx)
             {
+                if slot.name != host.name || slot.ip != host.ip {
+                    editor.pending_renames.push(Rename::Host {
+                        category: cat.name.clone(),
+                        from_name: slot.name.clone(),
+                        from_ip: slot.ip.clone(),
+                        to_name: host.name.clone(),
+                        to_ip: host.ip.clone(),
+                    });
+                }
                 *slot = host;
             }
             let created = form.mode_create;
@@ -771,8 +790,47 @@ fn run_sync(app: &mut App, ctx: &SyncContext, done: &str, failed: &str) {
     }
 }
 
+/// Replay the editor's pending renames onto favorites and history so a
+/// renamed host keeps its star and its place under Recent.
+fn migrate_renamed_entries(app: &mut App) {
+    let Some(editor) = app.editor.as_mut() else {
+        return;
+    };
+    let mut favorites_changed = false;
+    let mut history_changed = false;
+    for rename in std::mem::take(&mut editor.pending_renames) {
+        match rename {
+            Rename::Category { from, to } => {
+                favorites_changed |= app.favorites.rename_category(&from, &to);
+                history_changed |= app.history.rename_category(&from, &to);
+            }
+            Rename::Host {
+                category,
+                from_name,
+                from_ip,
+                to_name,
+                to_ip,
+            } => {
+                if from_name != to_name {
+                    favorites_changed |= app.favorites.rename_host(&category, &from_name, &to_name);
+                }
+                history_changed |=
+                    app.history
+                        .rename_host(&category, (&from_name, &from_ip), (&to_name, &to_ip));
+            }
+        }
+    }
+    if favorites_changed {
+        let _ = app.favorites.save();
+    }
+    if history_changed {
+        let _ = app.history.save();
+    }
+}
+
 fn save_config(app: &mut App) -> Result<()> {
     app.config.save(&app.config_path)?;
+    migrate_renamed_entries(app);
     if let Some(editor) = app.editor.as_mut() {
         editor.dirty = false;
         editor.flash("Saved");
@@ -1073,6 +1131,84 @@ mod tests {
         press_with(&mut app, KeyCode::Char('y'), KeyModifiers::CONTROL);
         assert_eq!(app.config.categories[0].hosts.len(), 1);
         assert!(editor(&app).pending_delete.is_none());
+    }
+
+    fn retype(app: &mut App, erase: usize, text: &str) {
+        for _ in 0..erase {
+            press(app, KeyCode::Backspace);
+        }
+        for ch in text.chars() {
+            press(app, KeyCode::Char(ch));
+        }
+    }
+
+    fn starred_app_with_history(dir: &TempDir) -> App {
+        let mut app = editing_app(dir);
+        app.favorites.toggle("infra", "gateway");
+        app.favorites.save().expect("save favorites");
+        app.history.record("gateway", "10.0.0.1", "infra");
+        app.history.save().expect("save history");
+        app
+    }
+
+    #[test]
+    fn saved_renames_carry_star_and_history_along() {
+        let dir = TempDir::new().expect("tempdir");
+        let mut app = starred_app_with_history(&dir);
+
+        press(&mut app, KeyCode::Down);
+        press(&mut app, KeyCode::Enter);
+        press(&mut app, KeyCode::Char('r'));
+        retype(&mut app, "gateway".len(), "edge");
+        press(&mut app, KeyCode::Enter);
+        assert_eq!(app.config.categories[0].hosts[0].name, "edge");
+        assert!(app.favorites.is_favorite("infra", "gateway"));
+
+        press(&mut app, KeyCode::Esc);
+        press(&mut app, KeyCode::Up);
+        press(&mut app, KeyCode::Enter);
+        press(&mut app, KeyCode::Char('r'));
+        retype(&mut app, "infra".len(), "core");
+        press(&mut app, KeyCode::Enter);
+        assert_eq!(app.config.categories[0].name, "core");
+
+        press_with(&mut app, KeyCode::Char('s'), KeyModifiers::CONTROL);
+        assert!(editor(&app).pending_renames.is_empty());
+        assert!(app.favorites.is_favorite("core", "edge"));
+        assert!(!app.favorites.is_favorite("infra", "gateway"));
+
+        let favorites = FavoritesStore::load(&dir.path().join("favorites.yaml"));
+        assert!(favorites.is_favorite("core", "edge"));
+        let history = HistoryStore::load(&dir.path().join("history.yaml"));
+        let entry = history.recent(1).next().expect("history entry");
+        assert_eq!(
+            (entry.category.as_str(), entry.host_name.as_str()),
+            ("core", "edge")
+        );
+    }
+
+    #[test]
+    fn discarded_renames_leave_star_and_history_alone() {
+        let dir = TempDir::new().expect("tempdir");
+        let mut app = starred_app_with_history(&dir);
+        app.config.save(&app.config_path).expect("save");
+
+        press(&mut app, KeyCode::Down);
+        press(&mut app, KeyCode::Enter);
+        press(&mut app, KeyCode::Char('r'));
+        retype(&mut app, "gateway".len(), "edge");
+        press(&mut app, KeyCode::Enter);
+        press(&mut app, KeyCode::Esc);
+        press(&mut app, KeyCode::Esc);
+        press(&mut app, KeyCode::Char('d'));
+
+        assert_eq!(app.mode, Mode::Browse);
+        assert_eq!(app.config.categories[0].hosts[0].name, "gateway");
+        assert!(app.favorites.is_favorite("infra", "gateway"));
+        assert_eq!(
+            app.history.recent(1).next().expect("entry").host_name,
+            "gateway"
+        );
     }
 
     #[test]

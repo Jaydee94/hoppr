@@ -29,6 +29,8 @@ Two virtual categories appear at the top of the category list when they have con
 
 Both virtual categories support the normal search query and vim navigation.
 
+Stars and history entries are stored by category and host name (history also by IP). When you rename a category, rename a host or change its IP in the settings editor, they follow along as soon as the change is saved; discarding the edit leaves them untouched. Renames made by editing the YAML by hand or arriving through a sync pull are not tracked.
+
 ### Search behavior
 
 The search query is split on whitespace into terms. A host is kept only when

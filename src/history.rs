@@ -75,6 +75,50 @@ impl HistoryStore {
         }
     }
 
+    /// Point the entries recorded for a host at its new name and address.
+    /// Returns `true` if any entry changed.
+    ///
+    /// [`Self::record`] keeps one entry per name + IP, so when the new
+    /// identity already has an entry only the most recent one survives.
+    pub fn rename_host(
+        &mut self,
+        category: &str,
+        (old_name, old_ip): (&str, &str),
+        (new_name, new_ip): (&str, &str),
+    ) -> bool {
+        let mut changed = false;
+        for entry in &mut self.entries {
+            if entry.category == category && entry.host_name == old_name && entry.ip == old_ip {
+                new_name.clone_into(&mut entry.host_name);
+                new_ip.clone_into(&mut entry.ip);
+                changed = true;
+            }
+        }
+        if changed {
+            let mut newer_exists = false;
+            self.entries.retain(|entry| {
+                if entry.host_name != new_name || entry.ip != new_ip {
+                    return true;
+                }
+                !std::mem::replace(&mut newer_exists, true)
+            });
+        }
+        changed
+    }
+
+    /// Point every entry of a category at the category's new name. Returns
+    /// `true` if any entry changed.
+    pub fn rename_category(&mut self, old_category: &str, new_category: &str) -> bool {
+        let mut changed = false;
+        for entry in &mut self.entries {
+            if entry.category == old_category {
+                new_category.clone_into(&mut entry.category);
+                changed = true;
+            }
+        }
+        changed
+    }
+
     pub fn recent(&self, n: usize) -> impl Iterator<Item = &HistoryEntry> {
         self.entries.iter().take(n)
     }
@@ -131,6 +175,56 @@ mod tests {
         assert_eq!(entries.len(), 2);
         assert_eq!(entries[0].host_name, "web-01");
         assert_eq!(entries[1].host_name, "db-01");
+    }
+
+    #[test]
+    fn rename_host_follows_name_and_ip_within_the_category() {
+        let tmp = TempDir::new().unwrap();
+        let mut store = HistoryStore::load(&tmp.path().join("history.yaml"));
+        store.record("web-01", "10.0.0.1", "prod");
+        store.record("web-01", "10.9.9.9", "lab");
+        store.record("db-01", "10.0.0.2", "prod");
+
+        assert!(store.rename_host("prod", ("web-01", "10.0.0.1"), ("web-a", "10.0.0.7")));
+        let seen: Vec<_> = store
+            .recent(10)
+            .map(|e| (e.category.as_str(), e.host_name.as_str(), e.ip.as_str()))
+            .collect();
+        assert_eq!(
+            seen,
+            [
+                ("prod", "db-01", "10.0.0.2"),
+                ("lab", "web-01", "10.9.9.9"),
+                ("prod", "web-a", "10.0.0.7"),
+            ]
+        );
+        assert!(!store.rename_host("prod", ("gone", "10.0.0.1"), ("x", "y")));
+    }
+
+    #[test]
+    fn rename_host_keeps_one_entry_per_name_and_ip() {
+        let tmp = TempDir::new().unwrap();
+        let mut store = HistoryStore::load(&tmp.path().join("history.yaml"));
+        store.record("old", "10.0.0.1", "prod");
+        store.record("other", "10.0.0.3", "prod");
+        store.record("new", "10.0.0.1", "prod");
+
+        assert!(store.rename_host("prod", ("old", "10.0.0.1"), ("new", "10.0.0.1")));
+        let names: Vec<_> = store.recent(10).map(|e| e.host_name.as_str()).collect();
+        assert_eq!(names, ["new", "other"]);
+    }
+
+    #[test]
+    fn rename_category_updates_only_matching_entries() {
+        let tmp = TempDir::new().unwrap();
+        let mut store = HistoryStore::load(&tmp.path().join("history.yaml"));
+        store.record("web-01", "10.0.0.1", "prod");
+        store.record("gw", "192.168.1.1", "home");
+
+        assert!(store.rename_category("prod", "live"));
+        let categories: Vec<_> = store.recent(10).map(|e| e.category.as_str()).collect();
+        assert_eq!(categories, ["home", "live"]);
+        assert!(!store.rename_category("prod", "other"));
     }
 
     #[test]
