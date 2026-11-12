@@ -313,12 +313,36 @@ fn ssh_handoff(terminal: &mut Terminal<CrosstermBackend<Stdout>>, app: &mut App)
         return Ok(());
     };
 
-    app.history.record(&host.name, &host.ip, &category_name);
-    let _ = app.history.save();
-
     let mut command = connect::build_command(&app.config, &host);
     let target = connection_target_label(&app.config, &host);
 
+    match suspend_tui(terminal, || run_session(&mut command, &target))? {
+        Ok(()) => {
+            app.history.record(&host.name, &host.ip, &category_name);
+            let _ = app.history.save();
+        }
+        Err(err) => app.set_status_error(format!("{err:#}")),
+    }
+    Ok(())
+}
+
+/// Hand the real terminal to `session`, then take it back.
+///
+/// Re-entering raw mode and the alternate screen is not conditional on
+/// anything `session` does or on how far leaving got, so the event loop
+/// never resumes on a cooked, main-screen terminal.
+fn suspend_tui<T>(
+    terminal: &mut Terminal<CrosstermBackend<Stdout>>,
+    session: impl FnOnce() -> T,
+) -> Result<T> {
+    let outcome = leave_tui().map(|()| session());
+    let resumed = resume_tui(terminal);
+    let outcome = outcome?;
+    resumed?;
+    Ok(outcome)
+}
+
+fn leave_tui() -> Result<()> {
     disable_raw_mode()?;
     // ratatui hides the cursor while rendering; re-show it so the inherited
     // ssh session starts with a visible cursor instead of inheriting DECTCEM
@@ -331,19 +355,30 @@ fn ssh_handoff(terminal: &mut Terminal<CrosstermBackend<Stdout>>, app: &mut App)
         Show,
         SetCursorStyle::DefaultUserShape
     )?;
+    Ok(())
+}
 
+fn resume_tui(terminal: &mut Terminal<CrosstermBackend<Stdout>>) -> Result<()> {
+    enable_raw_mode()?;
+    execute!(io::stdout(), EnterAlternateScreen)?;
+    terminal.clear()?;
+    Ok(())
+}
+
+/// Run `command` on the inherited terminal until it exits. The error names
+/// the program, since a missing `ssh`/`mosh` binary is the usual cause.
+fn run_session(command: &mut Command, target: &str) -> Result<()> {
+    let program = command.get_program().to_string_lossy().into_owned();
     let mut child = command
         .stdin(Stdio::inherit())
         .stdout(Stdio::inherit())
         .stderr(Stdio::inherit())
         .spawn()
-        .with_context(|| format!("failed to launch ssh to {target}"))?;
-    show_connecting_spinner(&target, &mut child);
-    let _ = child.wait()?;
-
-    enable_raw_mode()?;
-    execute!(io::stdout(), EnterAlternateScreen)?;
-    terminal.clear()?;
+        .with_context(|| format!("Could not start {program}"))?;
+    show_connecting_spinner(target, &mut child);
+    child
+        .wait()
+        .with_context(|| format!("Lost track of {program}"))?;
     Ok(())
 }
 
@@ -753,6 +788,17 @@ fn find_host(config: &Config, query: &str) -> Option<Host> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn run_session_reports_the_program_that_could_not_be_started() {
+        let mut command = Command::new("hoppr-test-no-such-program");
+        let err = run_session(&mut command, "ops@10.0.0.1").expect_err("spawn fails");
+        let message = format!("{err:#}");
+        assert!(
+            message.starts_with("Could not start hoppr-test-no-such-program: "),
+            "unexpected message: {message}"
+        );
+    }
 
     const AWKWARD: &str = "q\"b\\t\tn\nc\u{7}é\u{1F680}";
 
