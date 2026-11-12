@@ -2,7 +2,7 @@ use std::{
     cmp::Reverse,
     io::{self, Stdout, Write},
     path::{Path, PathBuf},
-    process::{Command, Stdio},
+    process::{self, Command, ExitStatus, Stdio},
     thread,
     time::{Duration, Instant},
 };
@@ -70,7 +70,11 @@ fn main() -> Result<()> {
         }
         Some(CliCommand::Connect(args)) => {
             let (cfg, _) = load_with_sync(&cli, &config_path)?;
-            run_connect(args, &cfg)
+            let code = run_connect(args, &cfg)?;
+            if code != 0 {
+                process::exit(code);
+            }
+            Ok(())
         }
         Some(CliCommand::History(args)) => {
             let history = HistoryStore::load(&default_history_path());
@@ -735,7 +739,9 @@ fn truncate(input: &str, max: usize) -> String {
     out
 }
 
-fn run_connect(args: ConnectArgs, config: &Config) -> Result<()> {
+/// Runs the connection and returns the exit code `hoppr connect` should end
+/// with, so a script can tell a failed remote shell from a clean one.
+fn run_connect(args: ConnectArgs, config: &Config) -> Result<i32> {
     let host = find_host(config, &args.query)
         .ok_or_else(|| anyhow!("no host matched query: {}", args.query))?;
     let mut effective = host;
@@ -757,15 +763,31 @@ fn run_connect(args: ConnectArgs, config: &Config) -> Result<()> {
             .map(|a| a.to_string_lossy().into_owned())
             .collect();
         println!("{program} {}", args.join(" "));
-        return Ok(());
+        return Ok(0);
     }
     let mut command = command;
-    command
+    let status = command
         .stdin(Stdio::inherit())
         .stdout(Stdio::inherit())
         .stderr(Stdio::inherit())
         .status()?;
-    Ok(())
+    Ok(exit_code_for(status))
+}
+
+/// A child killed by a signal has no exit code; shells report it as
+/// 128 + the signal number, and scripts wrapping `hoppr connect` expect that.
+fn exit_code_for(status: ExitStatus) -> i32 {
+    if let Some(code) = status.code() {
+        return code;
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::ExitStatusExt;
+        if let Some(signal) = status.signal() {
+            return 128 + signal;
+        }
+    }
+    1
 }
 
 fn find_host(config: &Config, query: &str) -> Option<Host> {
@@ -819,6 +841,64 @@ mod tests {
             message.starts_with("Could not start hoppr-test-no-such-program: "),
             "unexpected message: {message}"
         );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn exit_code_for_maps_codes_and_signals() {
+        use std::os::unix::process::ExitStatusExt;
+
+        assert_eq!(exit_code_for(ExitStatus::from_raw(0)), 0);
+        assert_eq!(exit_code_for(ExitStatus::from_raw(3 << 8)), 3);
+        assert_eq!(exit_code_for(ExitStatus::from_raw(255 << 8)), 255);
+        assert_eq!(exit_code_for(ExitStatus::from_raw(15)), 128 + 15);
+        assert_eq!(exit_code_for(ExitStatus::from_raw(9)), 128 + 9);
+    }
+
+    #[cfg(unix)]
+    fn connect_args(query: &str, dry_run: bool) -> ConnectArgs {
+        ConnectArgs {
+            query: query.into(),
+            user: None,
+            port: None,
+            command: None,
+            dry_run,
+        }
+    }
+
+    #[cfg(unix)]
+    fn config_with_cmd_hosts() -> Config {
+        let host = |name: &str, cmd: &str| Host {
+            name: name.into(),
+            ip: "127.0.0.1".into(),
+            cmd: Some(cmd.into()),
+            ..Host::default()
+        };
+        Config {
+            categories: vec![Category {
+                name: "local".into(),
+                icon: None,
+                hosts: vec![
+                    host("clean", "exit 0"),
+                    host("failing", "exit 7"),
+                    host("killed", "kill -TERM $$"),
+                ],
+            }],
+            ..Config::default()
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn run_connect_returns_the_exit_code_of_the_child() {
+        let config = config_with_cmd_hosts();
+        let code = |query: &str, dry_run: bool| {
+            run_connect(connect_args(query, dry_run), &config).expect("child runs")
+        };
+        assert_eq!(code("local/clean", false), 0);
+        assert_eq!(code("local/failing", false), 7);
+        assert_eq!(code("local/killed", false), 128 + 15);
+        assert_eq!(code("local/failing", true), 0);
     }
 
     #[test]

@@ -127,10 +127,11 @@ Supported: `bash`, `zsh`, `fish`, `elvish`, `powershell`.
 
 ## Exit codes
 
-| code | meaning                                                                                  |
-| ---- | ---------------------------------------------------------------------------------------- |
-| `0`  | success — including `--help`, `--version` and a `hoppr connect` whose remote shell ran   |
-| `1`  | runtime error (see stderr): unreadable config, no host matched, sync failure, a program that could not be started |
-| `2`  | usage error (see stderr): unknown flag or subcommand, missing or invalid argument        |
+| code    | meaning                                                                                  |
+| ------- | ---------------------------------------------------------------------------------------- |
+| `0`     | success — including `--help`, `--version` and `hoppr connect --dry-run`                  |
+| `1`     | runtime error (see stderr): unreadable config, no host matched, sync failure, a program that could not be started |
+| `2`     | usage error (see stderr): unknown flag or subcommand, missing or invalid argument        |
+| *other* | `hoppr connect` only: the exit code of the remote-shell program                          |
 
-The exit status of the spawned remote-shell process is **not** passed through: `hoppr connect` exits `0` once the program has run, whatever it returned.
+`hoppr connect` exits with the exit code of the program it ran, so a script can tell a failed connection from a clean one (`ssh` itself returns `255` on a connection error, otherwise the remote command's status). If the program was killed by a signal, the code is `128 + signal` on Unix; if no code is available at all, it is `1`. A `1` or `2` can therefore also come from the program itself. Connecting from inside the TUI never ends hoppr, whatever the program returned.
