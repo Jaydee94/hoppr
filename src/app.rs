@@ -8,7 +8,7 @@ use std::{
 use ratatui::widgets::ListState;
 
 use crate::{
-    config::{Category, Config, Host},
+    config::{Category, Config, Host, Inventory},
     editor::EditorState,
     favorites::FavoritesStore,
     history::HistoryStore,
@@ -166,6 +166,14 @@ pub struct App {
     pub show_help: bool,
 }
 
+fn adopt_legacy_favorites(favorites: &mut FavoritesStore, config: &Config) {
+    favorites.adopt_legacy_keys(|category, host| {
+        config.categories.iter().any(|candidate| {
+            candidate.name == category && candidate.hosts.iter().any(|h| h.name == host)
+        })
+    });
+}
+
 impl App {
     pub fn new(
         config: Config,
@@ -175,11 +183,7 @@ impl App {
         mut favorites: FavoritesStore,
         terminal: TerminalLauncher,
     ) -> Self {
-        favorites.adopt_legacy_keys(|category, host| {
-            config.categories.iter().any(|candidate| {
-                candidate.name == category && candidate.hosts.iter().any(|h| h.name == host)
-            })
-        });
+        adopt_legacy_favorites(&mut favorites, &config);
         let mut categories_state = ListState::default();
         let virt_count: usize =
             usize::from(!history.is_empty()) + usize::from(!favorites.is_empty());
@@ -524,6 +528,14 @@ impl App {
         self.show_help = !self.show_help;
     }
 
+    /// Replace the categories with a pulled inventory. Legacy favorite keys
+    /// are matched again, since the pull may have brought the host one of
+    /// them was waiting for.
+    pub fn apply_inventory(&mut self, inventory: Inventory) {
+        self.config.apply_inventory(inventory);
+        adopt_legacy_favorites(&mut self.favorites, &self.config);
+    }
+
     pub fn enter_edit_mode(&mut self) {
         self.editor = Some(EditorState::from_config(&self.config));
         self.mode = Mode::Edit;
@@ -576,7 +588,7 @@ mod tests {
     use std::path::PathBuf;
 
     use crate::{
-        config::{Category, Config, Defaults, Host},
+        config::{Category, Config, Defaults, Host, Inventory},
         favorites::FavoritesStore,
         history::HistoryStore,
         sync::SyncStatus,
@@ -584,6 +596,36 @@ mod tests {
     };
 
     use super::App;
+
+    #[test]
+    fn a_pulled_inventory_matches_legacy_star_keys_again() {
+        let dir = tempfile::TempDir::new().expect("tempdir");
+        let favorites_path = dir.path().join("favorites.yaml");
+        std::fs::write(&favorites_path, "favorites:\n- eu/west/db\n").expect("write");
+        let mut app = App::new(
+            Config::default(),
+            dir.path().join("config.yaml"),
+            SyncStatus::Disabled,
+            HistoryStore::load(&dir.path().join("history.yaml")),
+            FavoritesStore::load(&favorites_path),
+            TerminalLauncher::detect(None),
+        );
+        assert!(!app.favorites.is_favorite("eu/west", "db"));
+
+        app.apply_inventory(Inventory {
+            categories: vec![Category {
+                name: "eu/west".into(),
+                icon: None,
+                hosts: vec![Host {
+                    name: "db".into(),
+                    ip: "10.0.0.1".into(),
+                    ..Host::default()
+                }],
+            }],
+        });
+        assert_eq!(app.config.categories.len(), 1);
+        assert!(app.favorites.is_favorite("eu/west", "db"));
+    }
 
     #[test]
     fn startup_matches_legacy_star_keys_against_the_config() {

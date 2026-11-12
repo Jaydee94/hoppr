@@ -33,7 +33,7 @@ Both virtual categories support the normal search query and vim navigation.
 
 Stars and history entries are stored by category and host name (history also by IP). When you rename a category, rename a host or change its IP in the settings editor, they follow along as soon as the change is saved; discarding the edit leaves them untouched. Renames made by editing the YAML by hand or arriving through a sync pull are not tracked.
 
-Category and host names may contain `/`. A star is tied to exactly one category + host pair, so `eu/west` › `db` and `eu` › `west/db` are starred independently. A favorites file written by an older version, which stored such a star as the single string `eu/west/db`, is matched against the configured hosts on startup.
+Category and host names may contain `/`. A star is tied to exactly one category + host pair, so `eu/west` › `db` and `eu` › `west/db` are starred independently. A favorites file written by an older version, which stored such a star as the single string `eu/west/db`, is matched against the configured hosts on startup and again after a sync pull from the settings editor.
 
 ### Search behavior
 

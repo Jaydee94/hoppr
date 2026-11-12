@@ -862,7 +862,7 @@ fn run_sync(app: &mut App, ctx: &SyncContext, done: &str, failed: &str) {
             if tracked.exists()
                 && let Ok(inv) = Inventory::load_from_path(&tracked)
             {
-                app.config.apply_inventory(inv);
+                app.apply_inventory(inv);
             }
             app.record_sync(sync::has_uncommitted_changes(ctx).ok());
             flash(app, format!("{done} · {}", status.label()));
