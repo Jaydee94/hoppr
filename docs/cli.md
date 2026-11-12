@@ -90,7 +90,7 @@ See [`docs/sync.md`](sync.md) for the full story.
 
 ### `hoppr history`
 
-Show the connection history (last 50 connections, most recent first).
+Show the connection history (last 50 connections, most recent first). A host has one entry per category + name + IP, moved to the top each time you connect; the same machine listed under two categories keeps an entry for each.
 
 ```bash
 hoppr history

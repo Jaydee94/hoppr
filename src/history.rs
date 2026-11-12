@@ -61,9 +61,14 @@ impl HistoryStore {
         }
     }
 
+    /// Put a connection at the front, replacing the entry it already has.
+    ///
+    /// An entry is one category + name + IP, the same identity the Recent
+    /// list resolves against the config: the same machine listed in two
+    /// categories is two hosts there and keeps two entries here.
     pub fn record(&mut self, host_name: &str, ip: &str, category: &str) {
         self.entries
-            .retain(|e| !(e.host_name == host_name && e.ip == ip));
+            .retain(|e| !(e.category == category && e.host_name == host_name && e.ip == ip));
         self.entries.push_front(HistoryEntry {
             host_name: host_name.to_owned(),
             ip: ip.to_owned(),
@@ -78,8 +83,9 @@ impl HistoryStore {
     /// Point the entries recorded for a host at its new name and address.
     /// Returns `true` if any entry changed.
     ///
-    /// [`Self::record`] keeps one entry per name + IP, so when the new
-    /// identity already has an entry only the most recent one survives.
+    /// [`Self::record`] keeps one entry per category + name + IP, so when
+    /// the new identity already has an entry only the most recent one
+    /// survives.
     pub fn rename_host(
         &mut self,
         category: &str,
@@ -97,7 +103,7 @@ impl HistoryStore {
         if changed {
             let mut newer_exists = false;
             self.entries.retain(|entry| {
-                if entry.host_name != new_name || entry.ip != new_ip {
+                if entry.category != category || entry.host_name != new_name || entry.ip != new_ip {
                     return true;
                 }
                 !std::mem::replace(&mut newer_exists, true)
@@ -175,6 +181,48 @@ mod tests {
         assert_eq!(entries.len(), 2);
         assert_eq!(entries[0].host_name, "web-01");
         assert_eq!(entries[1].host_name, "db-01");
+    }
+
+    #[test]
+    fn record_keeps_the_same_host_apart_per_category() {
+        let tmp = TempDir::new().unwrap();
+        let mut store = HistoryStore::load(&tmp.path().join("history.yaml"));
+        store.record("web-01", "10.0.0.1", "prod");
+        store.record("web-01", "10.0.0.1", "lab");
+        store.record("web-01", "10.0.0.1", "prod");
+
+        let seen: Vec<_> = store.recent(10).map(|e| e.category.as_str()).collect();
+        assert_eq!(seen, ["prod", "lab"]);
+    }
+
+    #[test]
+    fn rename_host_leaves_the_same_identity_in_other_categories() {
+        let tmp = TempDir::new().unwrap();
+        let mut store = HistoryStore::load(&tmp.path().join("history.yaml"));
+        store.record("new", "10.0.0.1", "lab");
+        store.record("old", "10.0.0.1", "prod");
+        store.record("new", "10.0.0.1", "prod");
+
+        assert!(store.rename_host("prod", ("old", "10.0.0.1"), ("new", "10.0.0.1")));
+        let seen: Vec<_> = store
+            .recent(10)
+            .map(|e| (e.category.as_str(), e.host_name.as_str()))
+            .collect();
+        assert_eq!(seen, [("prod", "new"), ("lab", "new")]);
+    }
+
+    #[test]
+    fn loads_a_history_file_written_before_per_category_entries() {
+        let tmp = TempDir::new().unwrap();
+        let path = tmp.path().join("history.yaml");
+        fs::write(
+            &path,
+            "entries:\n- host_name: gw\n  ip: 192.168.1.1\n  category: home\n  connected_at: 1700000000\n",
+        )
+        .unwrap();
+        let mut store = HistoryStore::load(&path);
+        store.record("gw", "192.168.1.1", "home");
+        assert_eq!(store.recent(10).count(), 1);
     }
 
     #[test]
