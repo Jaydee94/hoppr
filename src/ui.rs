@@ -86,7 +86,12 @@ const BROWSE_HINTS: &[(HintWhen, KeyHint)] = &[
 
 const HINTS_NO_EDITOR: &[KeyHint] = &[("Esc", "Back")];
 const HINTS_CONFIRM_DELETE: &[KeyHint] = &[("y", "Yes"), ("n", "No"), ("Esc", "Cancel")];
-const HINTS_MENU: &[KeyHint] = &[("↑↓", "Move"), ("↩", "Select"), ("Esc", "Exit")];
+const HINTS_MENU: &[KeyHint] = &[
+    ("↑↓", "Move"),
+    ("↩", "Select"),
+    ("⌃s", "Save"),
+    ("Esc", "Exit"),
+];
 const HINTS_FILTER: &[KeyHint] = &[("Esc", "Close"), ("↩", "Confirm")];
 const HINTS_CATEGORIES: &[KeyHint] = &[
     ("↑↓", "Move"),
@@ -717,7 +722,7 @@ fn editor_footer<'a>(editor: &'a EditorState, theme: &Theme) -> Line<'a> {
         ]);
     }
     let (marker_color, fallback) = if editor.dirty {
-        (theme.warning, "Unsaved changes — press s to save")
+        (theme.warning, unsaved_reminder(editor.view))
     } else {
         (theme.success, "Saved")
     };
@@ -725,6 +730,19 @@ fn editor_footer<'a>(editor: &'a EditorState, theme: &Theme) -> Line<'a> {
         Span::styled("● ", marker_color),
         Span::styled(editor.flash.as_deref().unwrap_or(fallback), theme.text_dim),
     ])
+}
+
+/// Ctrl+S is not bound while an add/edit form is open — the form has to be
+/// confirmed first — so the reminder only names the key where it works.
+fn unsaved_reminder(view: EditorView) -> &'static str {
+    match view {
+        EditorView::CategoryForm | EditorView::HostForm => "Unsaved changes",
+        EditorView::Menu
+        | EditorView::Categories
+        | EditorView::Hosts
+        | EditorView::Defaults
+        | EditorView::Sync => "Unsaved changes — press Ctrl+S to save",
+    }
 }
 
 fn draw_pending_exit_modal(frame: &mut Frame<'_>, theme: &Theme, area: Rect) {
@@ -1154,6 +1172,37 @@ mod tests {
         sync::SyncStatus,
         terminal::TerminalLauncher,
     };
+
+    #[test]
+    fn unsaved_footer_names_ctrl_s_only_where_it_is_bound() {
+        let theme = super::Theme::midnight();
+        let mut editor = crate::editor::EditorState::from_config(&Config::default());
+        editor.dirty = true;
+        let footer_text = |editor: &crate::editor::EditorState| -> String {
+            super::editor_footer(editor, &theme)
+                .spans
+                .iter()
+                .map(|span| span.content.as_ref())
+                .collect()
+        };
+
+        for view in [
+            EditorView::Menu,
+            EditorView::Categories,
+            EditorView::Hosts,
+            EditorView::Defaults,
+            EditorView::Sync,
+        ] {
+            editor.view = view;
+            let text = footer_text(&editor);
+            assert!(text.contains("press Ctrl+S to save"), "{view:?}: {text}");
+        }
+        for view in [EditorView::CategoryForm, EditorView::HostForm] {
+            editor.view = view;
+            let text = footer_text(&editor);
+            assert!(!text.contains("to save"), "{view:?}: {text}");
+        }
+    }
 
     #[test]
     fn icon_slot_is_empty_without_icon() {

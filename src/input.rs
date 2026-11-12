@@ -310,7 +310,7 @@ fn handle_defaults(
         }
         KeyCode::Char('s') if ctrl => return Action::Save,
         KeyCode::Enter => match editor.apply_defaults(config) {
-            Ok(()) => editor.flash("Defaults applied · Ctrl+s to save"),
+            Ok(()) => editor.flash("Defaults applied · Ctrl+S to save"),
             Err(err) => editor.flash(err),
         },
         KeyCode::Char(c) => editor.defaults_inputs[editor.defaults_field].push(c),
@@ -435,9 +435,9 @@ fn handle_category_form(
             editor.category_form = None;
             editor.view = EditorView::Categories;
             Some(if created {
-                "Category added · s to save".into()
+                "Category added · Ctrl+S to save".into()
             } else {
-                "Category updated · s to save".into()
+                "Category updated · Ctrl+S to save".into()
             })
         }
         KeyCode::Char(c) => {
@@ -497,9 +497,9 @@ fn handle_host_form(
             editor.host_form = None;
             editor.view = EditorView::Hosts;
             Some(if created {
-                "Host added · s to save".into()
+                "Host added · Ctrl+S to save".into()
             } else {
-                "Host updated · s to save".into()
+                "Host updated · Ctrl+S to save".into()
             })
         }
         KeyCode::Char(c) => {
@@ -865,5 +865,27 @@ mod tests {
         assert_eq!(app.config.categories.len(), 2);
         assert_eq!(app.config.categories[1].name, "lab");
         assert_eq!(editor(&app).view, EditorView::Categories);
+    }
+
+    #[test]
+    fn save_reminder_names_the_key_that_actually_saves() {
+        let dir = TempDir::new().expect("tempdir");
+        let mut app = editing_app(&dir);
+        press(&mut app, KeyCode::Enter);
+        press(&mut app, KeyCode::Char('a'));
+        press(&mut app, KeyCode::Char('x'));
+        press(&mut app, KeyCode::Enter);
+        assert_eq!(
+            editor(&app).flash.as_deref(),
+            Some("Category added · Ctrl+S to save")
+        );
+
+        press(&mut app, KeyCode::Char('s'));
+        assert!(editor(&app).dirty);
+        assert!(!app.config_path.exists());
+
+        handle_editor_key(&mut app, KeyCode::Char('s'), true).expect("key handled");
+        assert!(!editor(&app).dirty);
+        assert!(app.config_path.exists());
     }
 }
