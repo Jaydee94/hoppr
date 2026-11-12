@@ -71,23 +71,39 @@ fn contains_parent_traversal(path: &str) -> bool {
         .any(|c| matches!(c, std::path::Component::ParentDir))
 }
 
-/// Strip `user:password@` (and `user@`) prefixes from an http(s) URL so secrets
-/// aren't echoed in error messages. SSH URLs (`git@host:...`) are left intact
-/// — the `git` username is conventional and there's no embedded secret.
+/// Strip embedded credentials from a `scheme://` URL so secrets aren't
+/// echoed in error messages. For http(s) the whole userinfo goes, because a
+/// lone `token@` is itself the secret. For every other scheme (`ssh://`,
+/// `git://`, …) only `:password` is dropped: the user name selects the
+/// account and is not a secret. scp-style `git@host:path` carries no
+/// password and is left intact.
 ///
 /// Userinfo only exists inside the authority, which ends at the first `/`,
 /// `?` or `#`; an `@` further along belongs to the path or query.
 pub fn redact_url(url: &str) -> String {
-    for scheme in ["https://", "http://"] {
-        let Some(rest) = url.strip_prefix(scheme) else {
-            continue;
-        };
-        let authority_end = rest.find(['/', '?', '#']).unwrap_or(rest.len());
-        if let Some(at) = rest[..authority_end].rfind('@') {
-            return format!("{scheme}{}", &rest[at + 1..]);
-        }
+    let Some((scheme, rest)) = url.split_once("://") else {
+        return url.to_string();
+    };
+    let is_scheme = !scheme.is_empty()
+        && scheme
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '+' | '-' | '.'));
+    if !is_scheme {
+        return url.to_string();
     }
-    url.to_string()
+    let authority_end = rest.find(['/', '?', '#']).unwrap_or(rest.len());
+    let Some(at) = rest[..authority_end].rfind('@') else {
+        return url.to_string();
+    };
+    let after_userinfo = &rest[at + 1..];
+    if scheme.eq_ignore_ascii_case("http") || scheme.eq_ignore_ascii_case("https") {
+        return format!("{scheme}://{after_userinfo}");
+    }
+    match rest[..at].split_once(':') {
+        Some((user, _)) if !user.is_empty() => format!("{scheme}://{user}@{after_userinfo}"),
+        Some(_) => format!("{scheme}://{after_userinfo}"),
+        None => url.to_string(),
+    }
 }
 
 fn expand_path(input: &str) -> PathBuf {
@@ -623,6 +639,51 @@ mod tests {
             redact_url("ssh://git@github.com/x"),
             "ssh://git@github.com/x"
         );
+    }
+
+    #[test]
+    fn redacts_passwords_but_keeps_the_user_for_other_schemes() {
+        assert_eq!(
+            redact_url("ssh://git:secret@host.example/team/repo.git"),
+            "ssh://git@host.example/team/repo.git"
+        );
+        assert_eq!(
+            redact_url("ssh://git:secret@host.example:2222/repo@v2.git"),
+            "ssh://git@host.example:2222/repo@v2.git"
+        );
+        assert_eq!(
+            redact_url("git+ssh://deploy:p@ss:word@host.example/x"),
+            "git+ssh://deploy@host.example/x"
+        );
+        assert_eq!(
+            redact_url("git://bob:secret@host.example/x"),
+            "git://bob@host.example/x"
+        );
+        assert_eq!(
+            redact_url("ftp://:secret@host.example/x"),
+            "ftp://host.example/x"
+        );
+        assert_eq!(
+            redact_url("HTTPS://alice:secret@host.example/x"),
+            "HTTPS://host.example/x"
+        );
+    }
+
+    #[test]
+    fn leaves_urls_without_a_password_alone() {
+        assert_eq!(
+            redact_url("ssh://git@host.example:2222/x"),
+            "ssh://git@host.example:2222/x"
+        );
+        assert_eq!(
+            redact_url("ssh://host.example/path:with@signs"),
+            "ssh://host.example/path:with@signs"
+        );
+        assert_eq!(
+            redact_url("git@host.example:team/repo@v2.git"),
+            "git@host.example:team/repo@v2.git"
+        );
+        assert_eq!(redact_url("/srv/git/a://b:c@d"), "/srv/git/a://b:c@d");
     }
 
     #[test]

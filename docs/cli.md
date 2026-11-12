@@ -76,7 +76,7 @@ hoppr list --format json
 | `hoppr config edit`   | Open the file in `$VISUAL` / `$EDITOR`.                   |
 | `hoppr config init`   | Write a starter config. Use `--force` to overwrite.       |
 
-`hoppr config show` (and `hoppr list --format yaml`) is meant for reading, not for restoring a config: credentials embedded in an HTTP(S) `sync.repo` URL are stripped, so `https://user:token@host/team/hosts.git` is printed as `https://host/team/hosts.git`. The file named by `hoppr config path` is the source of truth — copy that file, not the dump, when you move a config to another machine.
+`hoppr config show` (and `hoppr list --format yaml`) is meant for reading, not for restoring a config: credentials embedded in the `sync.repo` URL are stripped, so `https://user:token@host/team/hosts.git` is printed as `https://host/team/hosts.git` and `ssh://git:password@host/team/hosts.git` as `ssh://git@host/team/hosts.git`. The file named by `hoppr config path` is the source of truth — copy that file, not the dump, when you move a config to another machine.
 
 ### `hoppr sync`
 
