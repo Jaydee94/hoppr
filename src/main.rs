@@ -481,7 +481,7 @@ fn run_config_cmd(cmd: &ConfigCmd, config_path: &Path) -> Result<()> {
         }
         ConfigCmd::Show => {
             let cfg = Config::load_or_default(config_path)?;
-            println!("{}", yaml_serde::to_string(&cfg)?);
+            println!("{}", printable_yaml(cfg)?);
         }
         ConfigCmd::Edit => {
             if !config_path.exists() {
@@ -597,7 +597,7 @@ fn run_list(args: &ListArgs, config: &Config) -> Result<()> {
                 sync: config.sync.clone(),
                 categories: categories.into_iter().cloned().collect(),
             };
-            println!("{}", yaml_serde::to_string(&filtered)?);
+            println!("{}", printable_yaml(filtered)?);
         }
         ListFormat::Json => println!("{}", list_json(&categories)?),
         ListFormat::Table => {
@@ -617,6 +617,16 @@ fn run_list(args: &ListArgs, config: &Config) -> Result<()> {
         }
     }
     Ok(())
+}
+
+/// YAML for stdout. Takes the config by value because the dump is not the
+/// config: credentials embedded in `sync.repo` are stripped, as terminal
+/// output ends up in scrollback, logs and pasted bug reports.
+fn printable_yaml(mut config: Config) -> Result<String> {
+    if let Some(repo) = config.sync.as_mut().and_then(|sync| sync.repo.as_mut()) {
+        *repo = sync::redact_url(repo);
+    }
+    yaml_serde::to_string(&config).context("serialize config as YAML")
 }
 
 fn run_history(args: &HistoryArgs, history: &HistoryStore) -> Result<()> {
@@ -891,6 +901,59 @@ mod tests {
             serde_json::from_str(&history_json(&[&awkward]).expect("json")).expect("valid JSON");
         assert_eq!(parsed[0]["host"], AWKWARD);
         assert_eq!(parsed[0]["category"], AWKWARD);
+    }
+
+    #[test]
+    fn printable_yaml_strips_repo_credentials_and_nothing_else() {
+        let config = Config {
+            sync: Some(config::SyncConfig {
+                repo: Some("https://alice:s3cret@git.example.com/team/hosts.git".into()),
+                branch: Some("trunk".into()),
+                ..Default::default()
+            }),
+            categories: vec![Category {
+                name: "prod".into(),
+                icon: None,
+                hosts: vec![Host {
+                    name: "web-01".into(),
+                    ip: "10.0.0.1".into(),
+                    user: Some("alice".into()),
+                    ..Host::default()
+                }],
+            }],
+            ..Config::default()
+        };
+
+        let printed = printable_yaml(config.clone()).expect("yaml");
+        assert!(!printed.contains("s3cret"), "{printed}");
+        let parsed: Config = yaml_serde::from_str(&printed).expect("still a config");
+        let sync_cfg = parsed.sync.expect("sync stanza kept");
+        assert_eq!(
+            sync_cfg.repo.as_deref(),
+            Some("https://git.example.com/team/hosts.git")
+        );
+        assert_eq!(sync_cfg.branch.as_deref(), Some("trunk"));
+        assert_eq!(parsed.categories[0].hosts, config.categories[0].hosts);
+    }
+
+    #[test]
+    fn printable_yaml_leaves_ssh_urls_and_unsynced_configs_alone() {
+        let mut config = Config {
+            sync: Some(config::SyncConfig {
+                repo: Some("git@github.com:team/hosts.git".into()),
+                ..Default::default()
+            }),
+            ..Config::default()
+        };
+        let printed = printable_yaml(config.clone()).expect("yaml");
+        assert!(
+            printed.contains("git@github.com:team/hosts.git"),
+            "{printed}"
+        );
+
+        config.sync = None;
+        let printed = printable_yaml(config).expect("yaml");
+        assert!(printed.contains("sync: null"), "{printed}");
     }
 
     #[test]

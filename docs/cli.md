@@ -65,6 +65,8 @@ hoppr list --format json
 | `-c, --category`      | substring                           | _all_    |
 | `-o, --format`        | `table` · `json` · `yaml` · `plain` | `table`  |
 
+`--format yaml` prints the matching categories together with the `defaults` and `sync` stanzas. Like `hoppr config show`, it strips credentials from `sync.repo` (see below).
+
 ### `hoppr config`
 
 | subcommand            | effect                                                    |
@@ -73,6 +75,8 @@ hoppr list --format json
 | `hoppr config show`   | Dump the resolved YAML to stdout.                         |
 | `hoppr config edit`   | Open the file in `$VISUAL` / `$EDITOR`.                   |
 | `hoppr config init`   | Write a starter config. Use `--force` to overwrite.       |
+
+`hoppr config show` (and `hoppr list --format yaml`) is meant for reading, not for restoring a config: credentials embedded in an HTTP(S) `sync.repo` URL are stripped, so `https://user:token@host/team/hosts.git` is printed as `https://host/team/hosts.git`. The file named by `hoppr config path` is the source of truth — copy that file, not the dump, when you move a config to another machine.
 
 ### `hoppr sync`
 
